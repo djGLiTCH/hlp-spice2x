@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hlp-spice2x"
+version = "0.1.0"
+description = "Drive a GP2040-CE board's LEDs from spice2x cabinet lighting"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+authors = [
+    {name = "Jacob Simpson"},
+]
+requires-python = ">=3.9"
+dependencies = ["hidapi"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment :: Arcade",
+    "Topic :: System :: Hardware",
+]
+
+[project.optional-dependencies]
+dev = ["flake8", "flake8-docstrings", "pytest"]
+
+[project.urls]
+Homepage = "https://github.com/djGLiTCH/hlp-spice2x"
+
+[project.scripts]
+hlp-spice2x = "hlp_spice2x.__main__:main"
+
+[tool.setuptools]
+packages = ["hlp_spice2x"]
+
+[tool.flake8]
+max-line-length = 120
+docstring-convention = "pep257"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
