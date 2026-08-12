@@ -26,10 +26,27 @@ profile therefore works across board layouts.
 
 ## Requirements
 
-- A GP2040-CE board running firmware with the **Host Lighting** add-on enabled
-  (Configuration -> Add-Ons -> Host Lighting; off by default)
+- A GP2040-CE board running firmware with the **Host Lighting** add-on, enabled
+  in the web configurator (Configuration -> Add-Ons -> Host Lighting; off by
+  default). Not in an official release yet - see [Firmware](#firmware).
 - spice2x started with `-api PORT`, plus `-apipass PASS` if you set a password
 - Python 3.9 or later
+
+## Firmware
+
+Host Lighting is a proposed add-on rather than a shipped feature. It is open
+upstream as
+[PR #1691](https://github.com/OpenStickCommunity/GP2040-CE/pull/1691), so until
+that merges you need a test build:
+
+**[HLP v1.0 test builds](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.0)**
+
+There is a UF2 for every board GP2040-CE supports, on both the classic and
+LED-refactor pipelines, along with flashing and setup instructions. Enable the
+add-on in the web configurator once the board is running one of them.
+
+The protocol itself is documented in
+[docs/host-lighting.md](https://github.com/djGLiTCH/GP2040-CE/blob/20260811-host-lighting-protocol/docs/host-lighting.md).
 
 ## Install
 

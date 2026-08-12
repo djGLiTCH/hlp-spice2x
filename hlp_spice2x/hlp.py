@@ -288,8 +288,10 @@ def open_device(board_id_prefix: str = '') -> HostLightingDevice:
     """
     infos = find_devices()
     if not infos:
-        raise HostLightingError("no Host Lighting interface found - is a board connected "
-                                "with the add-on enabled?")
+        raise HostLightingError(
+            "no Host Lighting interface found - is a board connected with the add-on enabled? "
+            "The add-on is not in an official GP2040-CE release yet; test builds are at "
+            "https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.0")
     candidates = []
     for info in infos:
         device = HostLightingDevice(info['path'])

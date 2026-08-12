@@ -71,6 +71,21 @@ def test_both_are_host_lighting_errors():
     assert issubclass(hlp.HostLightingDisconnected, hlp.HostLightingError)
 
 
+def test_no_board_points_at_the_firmware_builds(monkeypatch):
+    """Test that the not-found error says where to get firmware.
+
+    Host Lighting is not in an official GP2040-CE release, so asking whether
+    the add-on is enabled is not enough on its own: a user on stock firmware
+    has no such setting to check. The link is what gets them unstuck.
+    """
+    monkeypatch.setattr(hlp, 'find_devices', lambda: [])
+    with pytest.raises(hlp.HostLightingError) as caught:
+        hlp.open_device()
+    message = str(caught.value)
+    assert 'add-on enabled' in message
+    assert 'releases/tag/HLP_v1.0' in message
+
+
 def test_send_frame_tolerates_a_late_commit():
     """Test that an unacknowledged COMMIT reports False rather than raising.
 
