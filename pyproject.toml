@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["flake8", "flake8-docstrings", "pytest"]
+dev = ["flake8", "flake8-docstrings", "flake8-pyproject", "pytest"]
 
 [project.urls]
 Homepage = "https://github.com/djGLiTCH/hlp-spice2x"
