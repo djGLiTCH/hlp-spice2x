@@ -197,9 +197,10 @@ def validate_targets(device, profile, caps) -> tuple:
 
     Where the board publishes a light table this is a question the table already
     answers, so it is read rather than asked. Only a board with no table has to
-    be probed by writing to it and seeing what comes back, which is also the
-    only path that dirties the staging buffer and so the only one that has to
-    clear it again.
+    be probed by writing to it and seeing what comes back.
+
+    Either way the caller clears the staging buffer afterwards, so this is free
+    to dirty it.
 
     :param device: an opened HostLightingDevice
     :param profile: a loaded profile
@@ -228,10 +229,6 @@ def validate_targets(device, profile, caps) -> tuple:
             continue  # nor is one too short to hold the count being read
         if reply[4]:  # [3] applied, [4] skipped
             unmapped.append(hlp.control_name(button_id))
-    try:
-        device.request_ok(hlp.CMD_CLEAR)
-    except hlp.HostLightingTimeout:
-        pass  # tidying up after the probes, and the loop below shrugs these off
     return unmapped, unreachable
 
 
@@ -560,6 +557,16 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
             if unreachable:
                 report(f"warning: {len(unreachable)} mapped control(s) need Host Lighting "
                        f"v1.2 or newer to reach: {', '.join(unreachable)}")
+            # Start from a known state whatever came before. The staging buffer
+            # outlives a session: pixels another host left staged, or this one
+            # left on its own last run, are republished by every commit and
+            # never overwritten, because nothing in this profile stages them.
+            # Probing for targets dirties it too, so this follows both paths.
+            try:
+                device.request_ok(hlp.CMD_CLEAR)
+            except hlp.HostLightingTimeout:
+                pass  # the loop below shrugs off a late reply the same way
+
             staging = staging_for(profile, caps)
             # the ordinals are freshly resolved, so the next frame is the one
             # worth asking about; after that nothing has moved to invalidate them

@@ -275,3 +275,21 @@ def connected(**kwargs):
     board = FakeBoard(**kwargs)
     device = board.open()
     return device, hlp.negotiate(device), board
+
+
+@pytest.mark.parametrize('version, path', [((1, 3), 'light table'), ((1, 0), 'write probe')])
+def test_a_run_starts_from_a_cleared_staging_buffer(version, path):
+    """Test that startup clears staging whichever way targets were discovered.
+
+    The staging buffer outlives a session. Pixels another host left staged, or
+    this one left on its own last run, are republished by every commit and never
+    overwritten, because nothing in the new profile stages them. Discovering
+    targets by reading the light table issues no writes at all, which is how the
+    clear came to be lost along with the writes it used to tidy up after.
+    """
+    board = FakeBoard(version=version, lights=M_ULTRA_LIGHTS)
+    lines = []
+    bridge.run(Nudging(board, polls=1), PROFILE, device=board.open(), report=lines.append)
+    staged = [command for command, _ in board.requests]
+    commit = staged.index(hlp.CMD_COMMIT)
+    assert hlp.CMD_CLEAR in staged[:commit], f"no CLEAR before the first frame ({path})"
