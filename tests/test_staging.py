@@ -561,3 +561,22 @@ def test_a_held_back_entry_resolves_once_the_table_appears():
     caps.refresh(device)
     assert bridge.deferred_lights(profile, caps) == []
     assert bridge.staging_for(profile, caps)[('light', 0, 1)] == (False, [('light', 12)])
+
+
+@pytest.mark.parametrize('white_first', [True, False])
+def test_white_survives_whatever_order_the_profile_lists_its_entries_in(white_first):
+    """Test that a second entry on one target cannot quietly drop the white channel.
+
+    Two profile entries may name the same target, and they are merged into the
+    wider of the two colours before staging. Deciding per entry whether white is
+    in play would let whichever entry the profile happens to list last decide it,
+    so swapping two lines of JSON would change what the LED emits.
+    """
+    plain = {'plain': (('light', 0, 0), (0, 0, 255))}
+    coloured = {'white': (('light', 0, 0), (255, 0, 255, 128))}
+    profile = dict(**coloured, **plain) if white_first else dict(**plain, **coloured)
+
+    board = stage({('light', 0, 0): (255, 0, 255, 128)}, profile=profile, version=(1, 3),
+                  colour_format=3, lights=M_ULTRA_LIGHTS)
+    assert white_lights(board) == [(3, hlp.subtractive_white((255, 0, 255, 128)))]
+    assert lights(board) == []

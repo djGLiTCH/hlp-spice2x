@@ -326,10 +326,16 @@ def staging_for(profile, caps, problems=None) -> dict:
     """
     staging = {('button', button_id): entry
                for button_id, entry in caps.staging_plan().items()}
+    # Whether a target carries white is a property of the target, not of any one
+    # entry naming it. Two entries may share a target, and resolve_frame merges
+    # them into the wider of the two colours, so deciding this per entry would
+    # let whichever the profile happens to list last decide whether the white
+    # channel is used at all.
+    wide = {target for target, colour in profile.values() if len(colour) > 3}
     for target, colour in profile.values():
         # a white component only survives where the chain has an emitter for it
         # and the firmware honours what the host sent rather than deriving its own
-        white = len(colour) > 3 and caps.host_white
+        white = target in wide and caps.host_white
         if target[0] == 'light':
             if caps.per_light and not caps.light_table:
                 # Held back rather than refused: this board is new enough to
