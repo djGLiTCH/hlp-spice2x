@@ -490,3 +490,28 @@ def test_white_on_a_control_with_no_light_table_entry_is_reported():
     profile = {'B2': (('button', 5), (255, 255, 255, 0))}
     _, caps, _ = connected(version=(1, 3), colour_format=2, lights=[(0, 0)])
     assert 'B2' in bridge.white_warnings(profile, caps)[0]
+
+
+def test_a_raw_range_past_the_board_is_reported_at_connect():
+    """Test that a range written for a bigger board is named rather than lighting nothing.
+
+    The load-time bound is the firmware's buffer ceiling, which is all that can
+    be known without a board. It catches a typo; it does not catch a profile
+    written for a 46-light board and run on a 16-light one.
+    """
+    _, caps, _ = connected(version=(1, 3), lights=[(n, n) for n in range(16)])
+    profile = {'Far': (('range', 16, 30), RED), 'Near': (('range', 0, 4), RED),
+               'Edge': (('range', 14, 4), RED)}
+    assert bridge.ranges_past_the_board(profile, caps) == [(14, 4), (16, 30)]
+
+
+def test_a_range_inside_the_board_is_not_reported():
+    """Test that the warning stays quiet on a profile that fits."""
+    _, caps, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS)
+    assert bridge.ranges_past_the_board({'Neon': (('range', 16, 30), RED)}, caps) == []
+
+
+def test_a_board_that_reports_no_extent_falls_back_to_the_buffer_ceiling():
+    """Test that a pre-v1.1 board or a dry run does not report every range as past the end."""
+    assert bridge.ranges_past_the_board({'Neon': (('range', 16, 30), RED)},
+                                        hlp.Capabilities.absent()) == []

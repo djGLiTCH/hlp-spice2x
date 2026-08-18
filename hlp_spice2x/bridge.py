@@ -385,6 +385,27 @@ def react_to_skips(device, caps, profile, skipped, report) -> bool:
     return False
 
 
+def ranges_past_the_board(profile, caps) -> list:
+    """Find raw ranges that reach past the last LED this board has.
+
+    The load-time check bounds a range by the firmware's buffer ceiling, which
+    is all that can be known without a board: it catches a typo, not a profile
+    written for a bigger board. The board reports its own extent, and a range
+    past it is staged happily and lights nothing, because staging is
+    fire-and-forget and out-of-range pixels are simply dropped.
+
+    A warning rather than a refusal: unlike a control name, a range is the
+    profile's own arithmetic, and half of one landing is still half a profile
+    working.
+
+    :param profile: a loaded profile
+    :param caps: the negotiated capabilities
+    :return: the (start, count) pairs that reach past the board, in order
+    """
+    return sorted({(target[1], target[2]) for target, _ in profile.values()
+                   if target[0] == 'range' and target[1] + target[2] > caps.led_extent})
+
+
 def resolve_stream_rate(fps, caps) -> tuple:
     """Decide how fast to stream, and why.
 
@@ -471,6 +492,11 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
             # the ordinals are freshly resolved, so the next frame is the one
             # worth asking about; after that nothing has moved to invalidate them
             verify_next = caps.outcome_mask
+            over = ranges_past_the_board(profile, caps)
+            if over:
+                report(f"warning: {len(over)} raw range(s) reach past this board's "
+                       f"{caps.led_extent} LEDs and light nothing beyond it: "
+                       + ', '.join(f"[{start}, {count}]" for start, count in over))
             for warning in white_warnings(profile, caps):
                 report(f"warning: {warning}")
             several = sorted(hlp.control_name(target[1])
