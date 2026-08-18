@@ -174,7 +174,7 @@ def test_a_failed_re_read_after_a_skip_is_reported_not_raised():
     board.drop.add(hlp.CMD_GET_CAPS)
 
     lines = []
-    assert bridge.react_to_skips(device, caps, PROFILE, [99], lines.append) is False
+    assert bridge.react_to_skips(device, caps, [99], lines.append) is False
     assert 're-reading its light table failed' in lines[0]
 
 
@@ -330,5 +330,5 @@ def test_the_run_reads_the_outcome_mask_and_reports_what_was_skipped():
     assert result.skipped == [99]
 
     lines = []
-    assert bridge.react_to_skips(device, caps, PROFILE, [99], lines.append) is False
+    assert bridge.react_to_skips(device, caps, [99], lines.append) is False
     assert '99' in lines[0]

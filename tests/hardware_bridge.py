@@ -24,8 +24,10 @@ visible that a static frame cannot:
 
 The profile it writes is generated from what the board reports, so it maps only
 controls that board actually has. It is written next to this file and left
-behind on purpose - it is a worked example of every profile entry kind, and it
-is the easiest way to see what one looks like for your own board.
+behind on purpose: it is the easiest way to see what a profile looks like for a
+board you have. It uses control names and per-light indexes; raw LED ranges are
+not generated, since which indexes are worth naming is a question about a
+layout rather than about a board.
 
 Run it from the repository root:
 
@@ -88,7 +90,7 @@ def describe_board(prefix):
 
 
 def build_profile(chase, strip, strip_lights, multi):
-    """Write a profile covering every kind of entry the board can take.
+    """Write a profile naming this board's controls, and its strip light by light.
 
     :param chase: control IDs to put in the travelling chase
     :param strip: a control with many lights, addressed one light at a time

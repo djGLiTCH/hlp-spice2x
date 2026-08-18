@@ -405,7 +405,7 @@ def white_warnings(profile, caps) -> list:
     return []
 
 
-def react_to_skips(device, caps, profile, skipped, report) -> bool:
+def react_to_skips(device, caps, skipped, report) -> bool:
     """Work out why the board skipped a light, and re-read the table if it moved.
 
     Being told is the whole point of the outcome mask. Before it existed a stale
@@ -419,7 +419,6 @@ def react_to_skips(device, caps, profile, skipped, report) -> bool:
 
     :param device: an opened HostLightingDevice
     :param caps: the negotiated capabilities, refreshed in place if the map moved
-    :param profile: a loaded profile
     :param skipped: the ordinals the board reported skipping
     :param report: callable used for progress output
     :return: whether the next frame is worth verifying again
@@ -642,8 +641,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                     if not result:
                         misses += 1
                     if result.skipped:
-                        verify_next = react_to_skips(device, caps, profile, result.skipped,
-                                                     report)
+                        verify_next = react_to_skips(device, caps, result.skipped, report)
                         staging = restage(profile, caps, staging, report)
                 last_frame = frame
                 keepalive_due = time.monotonic() + timeout_ms / 2000.0

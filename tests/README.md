@@ -34,6 +34,7 @@ never collects them, and importing one does nothing until you call it.
 | `test_loop_resilience.py` | That a dropped or rejected reply to the loop's housekeeping does not end a working run, and that a board going away still does. |
 | `test_profile.py` | Profile parsing and frame resolution. |
 | `test_cli.py` | Argument handling and the paths that exit before connecting to anything. |
+| `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection rather than per message, NUL framing across repeated calls, and a game that hangs up surfacing as a ConnectionError, which the bridge relies on to treat a closed game as a normal ending. |
 | `test_device_errors.py` | Telling a late reply apart from a device that has gone away. |
 
 ## The fake board
@@ -158,9 +159,9 @@ interrupt. Argument parsing, profile loading, device discovery, the handshake,
 the polling loop, the keepalive, the periodic LED-map check and the shutdown are
 all the real ones.
 
-The profile it writes is generated from what the board reports and left behind on
-purpose: it is a worked example of every entry kind, for a board you actually
-have.
+The profile it writes is generated from what the board reports and left behind
+on purpose: it is the easiest way to see what a profile looks like for a board
+you have. It uses control names and per-light indexes, not raw ranges.
 
 Two things to watch that no number can tell you:
 

@@ -402,7 +402,7 @@ def test_a_skip_after_the_map_moved_re_reads_the_light_table():
     board.lights = [(0, 0, 1)]
     board.fingerprint = 77
     lines = []
-    assert bridge.react_to_skips(device, caps, {}, [1], lines.append) is True
+    assert bridge.react_to_skips(device, caps, [1], lines.append) is True
     assert 're-read' in lines[0]
     assert caps.fingerprint == 77
 
@@ -415,7 +415,7 @@ def test_a_skip_with_no_map_change_says_the_profile_is_asking_for_too_much():
     """
     device, caps, _ = connected(version=(1, 3), lights=[(0, 0)])
     lines = []
-    assert bridge.react_to_skips(device, caps, {}, [9], lines.append) is False
+    assert bridge.react_to_skips(device, caps, [9], lines.append) is False
     assert 'does not have' in lines[0]
 
 
