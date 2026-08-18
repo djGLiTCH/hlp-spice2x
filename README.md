@@ -39,7 +39,7 @@ upstream as
 [PR #1691](https://github.com/OpenStickCommunity/GP2040-CE/pull/1691), so until
 that merges you need a test build:
 
-**[HLP v1.0 test builds](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.0)**
+**[HLP v1.3 test builds](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.3)**
 
 There is a UF2 for every board GP2040-CE supports, on both the classic and
 LED-refactor pipelines, along with flashing and setup instructions. Enable the
