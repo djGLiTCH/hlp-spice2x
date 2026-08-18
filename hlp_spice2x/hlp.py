@@ -48,7 +48,7 @@ module can be replaced by an import of gp2040ce_bintools.hostlighting.
 See docs/host-lighting.md in the GP2040-CE repository for the protocol
 reference.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import time

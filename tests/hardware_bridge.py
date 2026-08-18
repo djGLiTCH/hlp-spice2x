@@ -31,7 +31,7 @@ Run it from the repository root:
 
     python -m tests.hardware_bridge
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import colorsys

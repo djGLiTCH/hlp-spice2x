@@ -13,7 +13,7 @@ reads as all-zeroes on anything older than v1.3. That last one is the trap worth
 being able to reproduce: zeroes mean "every entry was skipped" to a host that
 reads them without checking the version first.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 from hlp_spice2x import hlp

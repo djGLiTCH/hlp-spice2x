@@ -6,7 +6,7 @@ path, because that is what lets one profile work across layouts, but on a board
 that publishes a light table the extra lights have to be staged explicitly or
 they never light.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import pytest

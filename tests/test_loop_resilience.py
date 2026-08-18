@@ -10,7 +10,7 @@ otherwise healthy session.
 What must still end the run is the board going away, which is not a bad reply
 but the absence of a board.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import pytest

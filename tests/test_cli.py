@@ -3,7 +3,7 @@
 These exercise the wiring between arguments and behaviour, which is otherwise
 only covered by running the tool by hand.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json

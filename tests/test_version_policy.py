@@ -8,7 +8,7 @@ opposite case: nothing it says can be trusted to mean what it used to.
 Everything here goes through the real transport against a fake board, so the
 handshake being tested is the one that runs against hardware.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import pytest

@@ -13,7 +13,7 @@ spice2x's reference C++ client:
 * the NUL terminator is part of the plaintext and is encrypted with it, so
   framing has to be found after decryption. Ciphertext contains NULs.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json

@@ -3,7 +3,7 @@
 Speaks the same wire format as spice2x: NUL-terminated JSON over TCP, with one
 RC4 keystream per connection when a password is set.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json

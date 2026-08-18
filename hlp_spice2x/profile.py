@@ -18,7 +18,7 @@ Targets are resolved as far as they can be without a board. Which ordinal an
 `index` names is a question only the board can answer, so it is left until the
 handshake and refused there if the firmware or the board cannot honour it.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json

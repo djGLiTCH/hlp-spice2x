@@ -9,7 +9,7 @@ what its value looks like: a zero that means "not reported", a flag that is an
 assertion rather than a negation, and a stride that comes off the wire so an
 older decoder cannot be misaligned by a newer board.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import pytest

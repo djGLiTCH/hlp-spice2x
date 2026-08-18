@@ -5,7 +5,7 @@ profile, and publishes that frame to the board. Frames are only sent when
 something changed; quiet frames send a single PING instead, which is enough to
 hold the board's takeover without republishing an identical frame.
 
-SPDX-FileCopyrightText: © 2026 Jacob Simpson
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import time
