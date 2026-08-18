@@ -102,12 +102,15 @@ def stage_group(device, operations, verify=False) -> list:
             try:
                 _, _, stale = stage(entries, outcomes=True)
             except (hlp.HostLightingTimeout, hlp.HostLightingRejected):
-                # Asking for a receipt must not be riskier than not asking. The
-                # entries were written before the reply was waited for, so they
-                # are staged either way; all that is lost is knowing what the
-                # board made of them. Every other round trip in the loop already
-                # shrugs a bad reply off, and this one is asked for at exactly
-                # the moment the board is busiest reconfiguring itself.
+                # Asking for a receipt must not be riskier than not asking, and
+                # abandoning the batch here would make it exactly that: entries
+                # are sent one report at a time and each waits for its reply
+                # before the next is written, so a reply that never comes takes
+                # every report after it with it. Send the batch again without
+                # waiting, which is what would have happened had nobody asked.
+                # Restaging pixels already written is idempotent, so the one
+                # duplicated report costs nothing but itself.
+                device.send_lights(entries, rgbw=rgbw)
                 continue
             skipped.extend(stale or ())
         else:

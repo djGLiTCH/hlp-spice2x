@@ -315,20 +315,24 @@ def test_a_lost_staging_receipt_does_not_end_the_run(how):
 
 
 def test_the_run_reads_the_outcome_mask_and_reports_what_was_skipped():
-    """Test that the reactive half of v1.3 is actually wired into the loop.
+    """Test that the reactive half of v1.3 is wired into the loop, not just present.
 
-    The mask is read on the first frame after the ordinals are resolved. Nothing
-    else in the suite drives that through run(), so without this a build that
-    never verified at all would look exactly like one that did.
+    The mask is read on the first frame after the ordinals are resolved, and a
+    skip it reports is what triggers the light table being re-read. Both halves
+    live in run(), so this has to drive run() - asserting on send_frame and
+    react_to_skips directly would pass just as happily against a loop that never
+    asked for the mask at all.
+
+    The board loses a light after its table was read, so a cached ordinal that
+    was valid at connect no longer is. Its fingerprint does not move, which is
+    what tells the bridge the profile is asking for more than the board has.
     """
-    board = FakeBoard(version=(1, 3), lights=M_ULTRA_LIGHTS)
-    device = board.open()
-    caps = hlp.negotiate(device)
-    # an ordinal this board does not have, so the board reports it skipped
-    staging = {('button', 0): (False, [('light', 99)])}
-    result = bridge.send_frame(device, {('button', 0): RED}, staging=staging, verify=True)
-    assert result.skipped == [99]
+    board = FakeBoard(version=(1, 3), lights=[(0, 0), (0, 1)])
 
-    lines = []
-    assert bridge.react_to_skips(device, caps, [99], lines.append) is False
-    assert '99' in lines[0]
+    def shrink(target):
+        """Take one of Up's two lights away, leaving the fingerprint alone."""
+        target.lights = [(0, 0, 1)]
+
+    text = run_with(board, shrink)
+    assert 'board skipped light(s)' in text
+    assert 'does not have' in text
