@@ -274,6 +274,26 @@ def light_operation(caps, button_id, index) -> tuple:
     return caps.stage_op(records[index])
 
 
+def deferred_lights(profile, caps) -> list:
+    """Name the per-light targets that cannot be resolved yet but still might be.
+
+    A board publishes its light registry from the render core during LED setup,
+    so a host that enumerates in the moments before that finishes sees the
+    feature bit clear on a board that would have answered a moment later. That
+    is a race, not a verdict, and the two are told apart by the version:
+    firmware too old to stage a single light will never be able to, while
+    firmware new enough with no table yet may well have one shortly.
+
+    :param profile: a loaded profile
+    :param caps: the negotiated capabilities
+    :return: the entries being held back, named as the profile wrote them
+    """
+    if not caps.per_light or caps.light_table:
+        return []
+    return sorted({f"{hlp.control_name(target[1])}[{target[2]}]"
+                   for target, _ in profile.values() if target[0] == 'light'})
+
+
 def staging_for(profile, caps) -> dict:
     """Work out how each of the profile's targets reaches the board's lights.
 
@@ -294,6 +314,14 @@ def staging_for(profile, caps) -> dict:
         # and the firmware honours what the host sent rather than deriving its own
         white = len(colour) > 3 and caps.host_white
         if target[0] == 'light':
+            if caps.per_light and not caps.light_table:
+                # Held back rather than refused: this board is new enough to
+                # colour one light and has simply not published the table that
+                # says which. Staged with nothing to do, so the entry lights
+                # nothing until a fingerprint change re-reads the table, rather
+                # than turning a timing race into a permanent refusal.
+                staging[target] = (False, [])
+                continue
             operation = light_operation(caps, target[1], target[2])
             staging[target] = (False, [('light_rgbw', operation[1]) if white else operation])
         elif target[0] == 'range' and white:
@@ -460,6 +488,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
     started = time.monotonic()
     caps = hlp.Capabilities.absent()
     staging = {}
+    deferred = []
     verify_next = False
 
     try:
@@ -492,6 +521,12 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
             # the ordinals are freshly resolved, so the next frame is the one
             # worth asking about; after that nothing has moved to invalidate them
             verify_next = caps.outcome_mask
+            deferred = deferred_lights(profile, caps)
+            if deferred:
+                report(f"warning: this board has not published a light table yet, so "
+                       f"{', '.join(deferred)} cannot be resolved and will not light. Its "
+                       f"light registry is populated during LED setup, so this may clear by "
+                       f"itself; it is re-checked whenever the board's LED map changes")
             over = ranges_past_the_board(profile, caps)
             if over:
                 report(f"warning: {len(over)} raw range(s) reach past this board's "
@@ -592,6 +627,10 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                     ranges = any(target[0] == 'range' for target, _ in profile.values())
                     report("board LED map changed, controls re-resolved"
                            + (" - check the profile's raw ranges" if ranges else ""))
+                    if deferred and not deferred_lights(profile, caps):
+                        report(f"the board's light table is available now, so "
+                               f"{', '.join(deferred)} resolved")
+                    deferred = deferred_lights(profile, caps)
 
             next_tick += period
             delay = next_tick - time.monotonic()

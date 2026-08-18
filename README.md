@@ -137,9 +137,12 @@ itself within two seconds if the bridge is killed or the game exits.
   with two Up buttons, all of them are lit.
 - **`index`** picks out one light of a control, counting as the board's own
   light table lists them, so `{ "button": "UP", "index": 1 }` is the second Up
-  button on a layout that has two. It needs HLP v1.2 or newer, and the bridge
-  refuses to start rather than lighting something else if the board is older or
-  cannot say which lights belong to that control.
+  button on a layout that has two. It needs HLP v1.2 or newer. On older
+  firmware, or where the board's table cannot say which lights belong to that
+  control, the bridge refuses to start rather than lighting something else. A
+  board that simply has not published its table yet is a different case: those
+  entries are held back with a warning and resolve on their own once it
+  appears.
 - **`range`** addresses raw LED indexes as `[start, count]`, for lights that do
   not correspond to a control. Unlike `button`, this is tied to the board it was
   written for.

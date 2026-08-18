@@ -515,3 +515,49 @@ def test_a_board_that_reports_no_extent_falls_back_to_the_buffer_ceiling():
     """Test that a pre-v1.1 board or a dry run does not report every range as past the end."""
     assert bridge.ranges_past_the_board({'Neon': (('range', 16, 30), RED)},
                                         hlp.Capabilities.absent()) == []
+
+
+def test_a_board_with_no_light_table_yet_holds_per_light_entries_back():
+    """Test that a clear feature bit on new-enough firmware is a race, not a verdict.
+
+    The light registry is populated on the render core during LED setup, so a
+    host that enumerates a moment early sees the bit clear on a board that would
+    have answered a moment later. Refusing to start would turn that into a
+    permanent judgement on a board that is merely still waking up.
+    """
+    _, caps, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS, light_table_feature=False)
+    profile = {'Second Up': (('light', 0, 1), RED)}
+    assert bridge.deferred_lights(profile, caps) == ['Up[1]']
+    assert bridge.staging_for(profile, caps)[('light', 0, 1)] == (False, [])
+
+
+def test_a_held_back_entry_stages_nothing_rather_than_raising():
+    """Test that a held-back target is passed over instead of tripping the guard."""
+    profile = {'Second Up': (('light', 0, 1), RED)}
+    board = stage({('light', 0, 1): RED}, profile=profile, version=(1, 3),
+                  lights=M_ULTRA_LIGHTS, light_table_feature=False)
+    assert lights(board) == []
+    assert named(board) == []
+
+
+def test_firmware_too_old_is_still_refused_rather_than_held_back():
+    """Test that the version case keeps its hard error, which no waiting can fix."""
+    _, caps, _ = connected(version=(1, 1), lights=M_ULTRA_LIGHTS)
+    profile = {'Second Up': (('light', 0, 1), RED)}
+    assert bridge.deferred_lights(profile, caps) == []
+    with pytest.raises(hlp.HostLightingIncompatible):
+        bridge.staging_for(profile, caps)
+
+
+def test_a_held_back_entry_resolves_once_the_table_appears():
+    """Test that the entry starts working by itself when the board catches up."""
+    device, caps, board = connected(version=(1, 3), lights=M_ULTRA_LIGHTS,
+                                    light_table_feature=False)
+    profile = {'Second Up': (('light', 0, 1), RED)}
+    assert bridge.staging_for(profile, caps)[('light', 0, 1)] == (False, [])
+
+    board.light_table_feature = True
+    board.fingerprint += 1
+    caps.refresh(device)
+    assert bridge.deferred_lights(profile, caps) == []
+    assert bridge.staging_for(profile, caps)[('light', 0, 1)] == (False, [('light', 12)])
