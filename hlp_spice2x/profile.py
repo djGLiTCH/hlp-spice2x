@@ -153,7 +153,8 @@ def resolve_frame(states: dict, profile: dict) -> dict:
 
     :param states: mapping of light name to state, from the game
     :param profile: a loaded profile
-    :return: mapping of target to (r, g, b)
+    :return: mapping of target to (r, g, b), or (r, g, b, w) where an entry
+        asked for the white channel
     """
     frame = {}
     for name, state in states.items():

@@ -580,3 +580,17 @@ def test_white_survives_whatever_order_the_profile_lists_its_entries_in(white_fi
                   colour_format=3, lights=M_ULTRA_LIGHTS)
     assert white_lights(board) == [(3, hlp.subtractive_white((255, 0, 255, 128)))]
     assert lights(board) == []
+
+
+@pytest.mark.parametrize('render_hz, reason', [
+    (59, 'matching'), (60, 'matching'), (61, 'capped'),
+])
+def test_a_board_rendering_at_the_cap_is_not_told_it_is_being_throttled(render_hz, reason):
+    """Test the boundary between matching a board's rate and capping it.
+
+    A board rendering at exactly the cap gets exactly its own rate, so telling
+    it that it has been capped points the user at --fps to recover a rate they
+    already have.
+    """
+    _, caps, _ = connected(version=(1, 3), render_hz=render_hz)
+    assert reason in bridge.resolve_stream_rate(None, caps)[1]

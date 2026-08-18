@@ -26,7 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="write a skeleton profile from the running game and exit")
     parser.add_argument("--board-id", default="",
                         help="hex prefix of the board ID, to pick one of several")
-    parser.add_argument("--fps", type=float, help="poll rate (default 60)")
+    parser.add_argument("--fps", type=float,
+                        help="poll rate (default: the board's own render rate, capped at 60)")
     parser.add_argument("--timeout", type=int, default=2000,
                         help="takeover keepalive timeout in ms (default 2000)")
     parser.add_argument("--overlay", action="store_true",

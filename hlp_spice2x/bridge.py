@@ -512,7 +512,7 @@ def resolve_stream_rate(fps, caps) -> tuple:
         return DEFAULT_FPS, 'no board to ask'
     if not caps.render_hz:
         return DEFAULT_FPS, 'the board did not state a render rate'
-    if caps.render_hz < MAX_STREAM_FPS:
+    if caps.render_hz <= MAX_STREAM_FPS:
         return float(caps.render_hz), "matching the board's render rate"
     return MAX_STREAM_FPS, f"capped below the board's {caps.render_hz} Hz"
 
