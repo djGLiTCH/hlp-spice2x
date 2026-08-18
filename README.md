@@ -79,13 +79,53 @@ upstream as
 that merges you need a test build:
 
 **[HLP v1.3 test builds](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.3)**
+- the current release, and the one to use
 
 There is a UF2 for every board GP2040-CE supports, on both the classic and
 LED-refactor pipelines, along with flashing and setup instructions. Enable the
 add-on in the web configurator once the board is running one of them.
 
+Earlier releases are kept because the bridge supports all of them, and because
+they are what makes each version gate testable on real hardware rather than only
+against a fake:
+[v1.2](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.2) |
+[v1.1](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.1) |
+[v1.0](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.0)
+
 The protocol itself is documented in
 [docs/host-lighting.md](https://github.com/djGLiTCH/GP2040-CE/blob/20260811-host-lighting-protocol/docs/host-lighting.md).
+
+## Protocol versions
+
+The bridge speaks every shipped version of the Host Lighting Protocol and works
+out which one it is talking to at connect, so the same profile and the same
+command line work on any of them. What differs is how much finesse is available.
+
+| Version | What the board gains | What the bridge does with it |
+|---|---|---|
+| v1.0 | the baseline | Control names and raw LED ranges. Finds out which controls have lights by writing a black frame to each and seeing what sticks. |
+| v1.1 | the light table, the reported render rate | Reads which controls have lights instead of probing for them, streams at the board's own rate, and lights **every** light of a control that has more than one. |
+| v1.2 | colouring a single light by its ordinal | The `index` profile entry. Extended controls (`A3`, `A4`, `E1`-`E12`) stage by name. |
+| v1.3 | a per-entry outcome mask, and the RGBW form of per-light staging | Notices when the board skipped a light and re-reads its map, and honours a white component in a profile colour. |
+
+A board reporting a **newer minor version** than this bridge knows is driven as
+the newest it does know, never refused: within a major version the protocol only
+ever adds, so such a board still keeps every promise being relied on.
+
+A board reporting a **different major version** is refused, because a major
+version is the one thing allowed to change what existing commands mean. `--force`
+overrides that for testing, behind a warning that the run is not reliable.
+
+The negotiated result is printed at startup, so what the bridge decided is
+visible rather than guessed at:
+
+```
+board: Haute42 COSMOX M Ultra (v0.7.12-354-gdf98847)
+board speaks HLP v1.3 - light table, per-light staging, outcome mask, renders at 40 Hz (white channel: no)
+takeover: whole frame, 2000 ms keepalive, applying board brightness
+controls the board gives more than one light, all of which will be lit: L3, Up
+streaming at 40 fps (matching the board's render rate)
+```
 
 ## Install
 
@@ -116,6 +156,14 @@ hlp-spice2x --port 1337 --profile iidx.json
 
 Press Ctrl-C to stop. The board returns to its own animations, and does so by
 itself within two seconds if the bridge is killed or the game exits.
+
+The run reports what it negotiated, warns about anything in the profile this
+board cannot light, and prints a summary when it stops:
+
+```
+1186 frames in 29.7s (40.0/s published), 0 commits unacknowledged
+released - on-board animations restored
+```
 
 ## Profile format
 
@@ -170,24 +218,56 @@ control add together and clamp.
 | `--host ADDR` | Where spice2x is listening, default `127.0.0.1`. Only needed if the game runs on a different machine from the board. |
 | `--overlay` | Paint only the mapped controls and let everything else keep animating. Without it the whole frame is taken and unmapped LEDs go dark. |
 | `--full-brightness` | Ignore the board's configured brightness and render the colours the game asks for. |
-| `--fps N` | Poll rate, default 60. |
+| `--fps N` | Poll rate. Defaults to the board's own render rate where it reports one slower than 60, and to 60 otherwise. Passing this overrides both. |
 | `--board-id PREFIX` | Pick one of several connected boards, by the prefix of its factory ID. |
 | `--dry-run` | Print frames instead of driving a board. Never opens the HID interface. |
 | `--timeout MS` | Takeover keepalive, default 2000 ms. The board restores its animations if it stops hearing from the host for this long. |
+| `--force` | Run against a protocol major version this bridge does not support. Unsupported and for testing only; commands may not mean what the bridge thinks they mean. |
 
 `--list-lights`, `--write-profile` and `--dry-run` talk to spice2x alone, so you
-can build and check a profile on the game PC with no board attached.
+can build and check a profile on the game PC with no board attached. A dry run
+has no light table to resolve an `index` entry against, so it shows those
+entries as the profile wrote them, such as `Up[1]`.
 
 ## Notes
 
 Frames are only sent when something actually changes; quiet frames send a single
-keepalive instead. Polling at 60 Hz against a stand-in server with static
-lighting, 703 polls produced one board update.
+keepalive instead. Against a stand-in server with static lighting, 703 polls
+produced one board update.
+
+Streaming faster than the board renders is wasted work, so the bridge matches a
+board that reports a slower rate and caps a faster one at 60: cabinet lighting
+gains nothing visible above that, and the headroom is worth more than the rate
+when a poll runs late.
 
 The bridge does not use spice2x's built-in HID lights feature. That expects a
 device declaring its lights in its HID descriptor, which cannot describe a board
 whose LED map the user configures. Going through the Spice API instead is what
 lets one profile work on any board.
+
+## Tests
+
+```
+pip install -e ".[dev]"
+pytest
+```
+
+The suite covers all four protocol versions without needing a board, by running
+the real client against a fake that is parameterised by version and gates its own
+replies the way firmware does.
+
+There are also checks that need a board, for confirming behaviour on real
+hardware: what a board reports about itself, whether each light is addressed
+correctly, whether the staging order holds, and whether the whole program works
+driven from its own entry point.
+
+```
+python -m tests.hardware_probe        # read-only, safe to run mid-game
+python -m tests.hardware_sweep        # eleven phases, watched by eye
+```
+
+[tests/README.md](tests/README.md) explains what every test file is for, when to
+reach for it, and how to run it.
 
 ## Contributing profiles
 
