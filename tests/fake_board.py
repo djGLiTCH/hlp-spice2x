@@ -58,7 +58,8 @@ class FakeBoard:
     def __init__(self, version=(1, 3), lights=PLAIN_LIGHTS, synthesised=False,
                  colour_format=0, render_hz=40, light_table_feature=True, led_extent=None,
                  label='Fake Board', firmware='v0.0.0-fake',
-                 board_id='0011223344556677', fingerprint=1, magic=b'GPHL'):
+                 board_id='0011223344556677', fingerprint=1, magic=b'GPHL',
+                 drop=(), reject=()):
         """Describe the board and the firmware it is running.
 
         :param version: the (major, minor) the board reports from PING
@@ -77,6 +78,8 @@ class FakeBoard:
         :param fingerprint: the LED-map fingerprint reported on pages 1, 2 and 5
         :param magic: the PING magic, for standing in as something that is not
             a Host Lighting interface at all
+        :param drop: commands to leave unanswered, as a flaky link would
+        :param reject: commands to answer with a non-OK status
         """
         self.version = tuple(version)
         self.lights = [tuple(light) + (1,) * (3 - len(light)) for light in lights]
@@ -90,6 +93,9 @@ class FakeBoard:
         self.board_id = board_id
         self.fingerprint = fingerprint
         self.magic = magic
+        # mutable so a test can start dropping or rejecting mid-run
+        self.drop = set(drop)
+        self.reject = set(reject)
         self.requests = []
         self.pending = []
         self.closed = False
@@ -158,6 +164,10 @@ class FakeBoard:
 
     def _answer(self, command, payload):
         """Build the reply to one request, or None to stay silent."""
+        if command in self.drop:
+            return None
+        if command in self.reject:
+            return self._reply(status=1)
         if command == hlp.CMD_PING:
             reply = self._reply()
             reply[3:7] = self.magic

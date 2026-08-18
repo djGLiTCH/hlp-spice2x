@@ -224,6 +224,8 @@ def validate_targets(device, profile, caps) -> tuple:
             reply = device.request_ok(hlp.CMD_SET_BUTTONS, bytes([1, button_id, 0, 0, 0]))
         except hlp.HostLightingTimeout:
             continue  # a probe that went unanswered is not evidence of anything
+        if len(reply) < 5:
+            continue  # nor is one too short to hold the count being read
         if reply[4]:  # [3] applied, [4] skipped
             unmapped.append(hlp.control_name(button_id))
     try:
@@ -366,7 +368,14 @@ def react_to_skips(device, caps, profile, skipped, report) -> bool:
     """
     named = ', '.join(str(ordinal) for ordinal in skipped)
     before = caps.fingerprint
-    caps.refresh(device)
+    try:
+        caps.refresh(device)
+    except hlp.HostLightingDisconnected:
+        raise  # the board going away is not something to carry on through
+    except hlp.HostLightingError as error:
+        report(f"warning: board skipped light(s) {named}, and re-reading its light table "
+               f"failed ({error})")
+        return False
     if caps.fingerprint != before:
         report(f"board skipped light(s) {named}; its LED map had changed underneath, so the "
                f"light table was re-read")
@@ -514,24 +523,44 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
             elif device is not None and time.monotonic() >= keepalive_due:
                 try:
                     device.request_ok(hlp.CMD_PING, timeout=0.25)
-                except hlp.HostLightingTimeout:
-                    pass
+                except (hlp.HostLightingTimeout, hlp.HostLightingRejected):
+                    pass  # a keepalive is worth sending, not worth insisting on
                 keepalive_due = time.monotonic() + timeout_ms / 2000.0
 
             # checked on wall-clock, not frame count, so a static game screen
             # (which produces no new frames) still notices a reconfiguration
             if device is not None and time.monotonic() >= fingerprint_due:
                 fingerprint_due = time.monotonic() + 5.0
-                current = hlp.read_state(device)['fingerprint']
-                if current != fingerprint:
+                changed = False
+                try:
+                    current = hlp.read_state(device)['fingerprint']
+                    changed = current != fingerprint
+                    if changed:
+                        # Re-read rather than only saying so. The light table is
+                        # what the expansion addresses, and a table that moved
+                        # underneath it points at the wrong lights while still
+                        # looking valid: a stale ordinal is a perfectly good
+                        # ordinal for another light. The walk costs a round trip
+                        # per four records, so this drops a frame on a large
+                        # board; the tick below catches back up.
+                        caps.refresh(device)
+                except hlp.HostLightingDisconnected:
+                    raise  # the board going away is not a housekeeping failure
+                except hlp.HostLightingError as error:
+                    # This poll is housekeeping. Every other round trip the loop
+                    # makes already shrugs off a bad reply, and the light table
+                    # is at its most likely to be in flux during exactly the
+                    # reconfiguration that moved the fingerprint. The next poll
+                    # is five seconds away.
+                    report(f"warning: could not re-read the board's LED map ({error}), "
+                           f"retrying in 5s")
+                    changed = False
+                if changed:
+                    # only once the re-read has landed: refresh replaces page 1
+                    # before it walks the light table, so a failure part-way
+                    # through would leave a new fingerprint standing against a
+                    # stale table that nothing would ever re-read
                     fingerprint = current
-                    # Re-read rather than only saying so. The light table is what
-                    # the expansion addresses, and a table that moved underneath
-                    # it points at the wrong lights while still looking valid: a
-                    # stale ordinal is a perfectly good ordinal for another light.
-                    # The walk costs a round trip per four records, so this drops
-                    # a frame on a large board; the tick below catches back up.
-                    caps.refresh(device)
                     staging = staging_for(profile, caps)
                     verify_next = caps.outcome_mask
                     ranges = any(target[0] == 'range' for target, _ in profile.values())
