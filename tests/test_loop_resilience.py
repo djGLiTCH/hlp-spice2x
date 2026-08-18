@@ -105,7 +105,7 @@ def test_a_light_table_that_will_not_settle_does_not_end_the_run():
     assert 'frames in' in text
 
 
-def test_the_fingerprint_is_not_advanced_by_a_re_read_that_failed():
+def test_a_failed_refresh_does_not_stop_a_later_one_landing():
     """Test that a half-finished refresh does not hide the change it failed on.
 
     The refresh replaces page 1 before it walks the light table, so recording
@@ -176,3 +176,102 @@ def test_a_failed_re_read_after_a_skip_is_reported_not_raised():
     lines = []
     assert bridge.react_to_skips(device, caps, PROFILE, [99], lines.append) is False
     assert 're-reading its light table failed' in lines[0]
+
+
+class Clock:
+    """A clock the test advances itself, so a five-second poll costs no time."""
+
+    def __init__(self):
+        """Start somewhere far from zero, as a real monotonic clock would be."""
+        self.now = 1000.0
+
+    def monotonic(self):
+        """Report the current time."""
+        return self.now
+
+    def sleep(self, seconds):
+        """Advance instead of waiting."""
+        self.now += max(seconds, 0.0)
+
+
+class Reconfiguring:
+    """A connection that moves the board's LED map, failing its first re-read."""
+
+    def __init__(self, board, clock, polls=4):
+        """Hold the board to reconfigure and the clock to push past each poll."""
+        self.board = board
+        self.clock = clock
+        self.polls = 0
+        self.limit = polls
+
+    def lights_read(self):
+        """Push the clock past the next LED-map poll, moving the map once."""
+        self.polls += 1
+        self.clock.now += 5.0
+        if self.polls == 1:
+            original = self.board._lights_page
+
+            def unanswered(start):
+                self.board._lights_page = original   # only the first walk fails
+                return None
+            self.board._lights_page = unanswered
+            self.board.fingerprint += 1
+        if self.polls > self.limit:
+            raise KeyboardInterrupt
+        return {'P1 Up': 1.0}
+
+
+def test_a_change_whose_re_read_failed_is_still_outstanding_next_poll(monkeypatch):
+    """Test that a map change survives the re-read that failed on it.
+
+    Recording the new fingerprint before the re-read has landed leaves it
+    standing against a stale light table, and every later poll then compares
+    against the value the failed attempt wrote and sees nothing to do. The board
+    is never re-read, and the profile lights the wrong LEDs for the rest of the
+    run behind a single warning.
+
+    This has to drive the loop rather than the refresh, because the loop's own
+    copy of the fingerprint is the thing under test.
+    """
+    board = FakeBoard(version=(1, 3), lights=M_ULTRA_LIGHTS)
+    clock = Clock()
+    monkeypatch.setattr(bridge, 'time', clock)
+    lines = []
+    bridge.run(Reconfiguring(board, clock), PROFILE, device=board.open(), report=lines.append)
+    text = '\n'.join(lines)
+    assert 'could not re-read' in text          # the first attempt failed
+    assert 'controls re-resolved' in text       # and a later one still picked it up
+
+
+def test_a_board_that_stops_fitting_the_profile_does_not_end_the_run():
+    """Test that a mid-run re-resolve failure holds entries back rather than stopping.
+
+    Refusing a profile the board cannot light belongs at startup, where it costs
+    nothing and the message is the point. The same refusal partway through a game
+    costs the session, and the entries that no longer fit are only a subset:
+    everything else can still be lit correctly.
+    """
+    board = FakeBoard(version=(1, 3), lights=M_ULTRA_LIGHTS)
+    device = board.open()
+    caps = hlp.negotiate(device)
+    profile = {'P1 Up': (('button', 0), RED), 'Third Up': (('light', 0, 5), RED)}
+
+    lines = []
+    staging = bridge.restage(profile, caps, {}, lines.append)
+    assert 'out of range' in lines[0]
+    assert staging[('light', 0, 5)] == (False, [])
+    assert staging[('button', 0)][1]            # the rest of the profile still resolves
+
+
+def test_the_same_profile_is_still_refused_at_startup():
+    """Test that holding entries back mid-run did not soften the startup refusal."""
+    _, caps, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS)
+    with pytest.raises(Exception, match='out of range'):
+        bridge.staging_for({'Third Up': (('light', 0, 5), RED)}, caps)
+
+
+def connected(**kwargs):
+    """Open a fake board, negotiate, and return the device, capabilities and board."""
+    board = FakeBoard(**kwargs)
+    device = board.open()
+    return device, hlp.negotiate(device), board

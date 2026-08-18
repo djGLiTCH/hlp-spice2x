@@ -294,18 +294,27 @@ def deferred_lights(profile, caps) -> list:
                    for target, _ in profile.values() if target[0] == 'light'})
 
 
-def staging_for(profile, caps) -> dict:
+def staging_for(profile, caps, problems=None) -> dict:
     """Work out how each of the profile's targets reaches the board's lights.
 
     Built at connect and again whenever the board says its LED map changed,
     never per frame. The answers depend on the board, and the board only changes
     its mind when it says so.
 
+    Refusing a profile the board cannot light is a decision that belongs at
+    startup, where stopping costs nothing and the message is the whole point. The
+    same refusal partway through a game costs a session, so a caller re-resolving
+    a board that moved underneath it passes `problems` and gets the entries it
+    cannot honour held back and named instead.
+
     :param profile: a loaded profile
     :param caps: the negotiated capabilities
+    :param problems: if given, entries the board cannot honour are described into
+        this list and staged as nothing, rather than raising
     :return: mapping of target to (stage by control name, staging operations)
     :raises hlp.HostLightingIncompatible: if the firmware cannot honour the profile
     :raises profile_module.ProfileError: if the board cannot honour the profile
+        and no `problems` list was given to collect it instead
     """
     staging = {('button', button_id): entry
                for button_id, entry in caps.staging_plan().items()}
@@ -322,7 +331,14 @@ def staging_for(profile, caps) -> dict:
                 # than turning a timing race into a permanent refusal.
                 staging[target] = (False, [])
                 continue
-            operation = light_operation(caps, target[1], target[2])
+            try:
+                operation = light_operation(caps, target[1], target[2])
+            except profile_module.ProfileError as error:
+                if problems is None:
+                    raise
+                problems.append(str(error))
+                staging[target] = (False, [])
+                continue
             staging[target] = (False, [('light_rgbw', operation[1]) if white else operation])
         elif target[0] == 'range' and white:
             staging[target] = (False, [('range_rgbw', target[1], target[2])])
@@ -432,6 +448,33 @@ def ranges_past_the_board(profile, caps) -> list:
     """
     return sorted({(target[1], target[2]) for target, _ in profile.values()
                    if target[0] == 'range' and target[1] + target[2] > caps.led_extent})
+
+
+def restage(profile, caps, staging, report) -> dict:
+    """Re-resolve a profile against a board whose LED map has moved.
+
+    A board that no longer fits the profile is refused at startup, where the
+    refusal is the whole point and costs nothing. Refusing partway through a game
+    costs the session instead, and the entries that no longer fit are a subset:
+    everything else on the board can still be lit correctly. So they are held
+    back and named, once, and the rest of the profile carries on.
+
+    :param profile: a loaded profile
+    :param caps: the negotiated capabilities, already refreshed
+    :param staging: the staging in use until now, kept if nothing can be resolved
+    :param report: callable used for progress output
+    :return: the staging to use from here on
+    """
+    problems = []
+    try:
+        restaged = staging_for(profile, caps, problems)
+    except hlp.HostLightingError as error:
+        report(f"warning: the board's LED map changed and the profile can no longer be "
+               f"resolved against it ({error}); the previous mapping is still in use")
+        return staging
+    for problem in problems:
+        report(f"warning: after the board's LED map changed, {problem}")
+    return restaged
 
 
 def resolve_stream_rate(fps, caps) -> tuple:
@@ -577,7 +620,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                     if result.skipped:
                         verify_next = react_to_skips(device, caps, profile, result.skipped,
                                                      report)
-                        staging = staging_for(profile, caps)
+                        staging = restage(profile, caps, staging, report)
                 last_frame = frame
                 keepalive_due = time.monotonic() + timeout_ms / 2000.0
                 frames += 1
@@ -622,7 +665,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                     # through would leave a new fingerprint standing against a
                     # stale table that nothing would ever re-read
                     fingerprint = current
-                    staging = staging_for(profile, caps)
+                    staging = restage(profile, caps, staging, report)
                     verify_next = caps.outcome_mask
                     ranges = any(target[0] == 'range' for target, _ in profile.values())
                     report("board LED map changed, controls re-resolved"
