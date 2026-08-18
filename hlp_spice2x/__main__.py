@@ -85,7 +85,8 @@ def inspect(args) -> int:
             profile_module.write_skeleton(args.write_profile, states)
             print(f"wrote {args.write_profile} with {len(states)} lights")
             print("fill in each 'button' with a control name (Up Down Left Right B1-B4 L1 R1")
-            print("L2 R2 S1 S2 L3 R3 A1 A2 PLED1-4 TURBO CASE); leave it empty to ignore")
+            print("L2 R2 S1 S2 L3 R3 A1 A2 PLED1-4 TURBO CASE, plus A3 A4 and E1-E12 where")
+            print("the board reports them); leave it empty to ignore")
         else:
             print(f"{len(states)} lights:")
             for name, state in sorted(states.items()):

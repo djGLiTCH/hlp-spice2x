@@ -16,25 +16,9 @@ import pytest
 from hlp_spice2x import bridge, hlp
 from hlp_spice2x.__main__ import build_parser
 
-from .fake_board import FakeBoard
+from .fake_board import FakeBoard, OneShotConnection
 
 RED_PROFILE = {'P1': (('button', 4), (255, 0, 0))}
-
-
-class OneShotConnection:
-    """A spice2x connection that answers one poll and then ends the run."""
-
-    def __init__(self, states=None):
-        """Hold the light states this connection will report once."""
-        self.states = states or {}
-        self.polls = 0
-
-    def lights_read(self):
-        """Report the states once, then interrupt the loop the way Ctrl-C does."""
-        self.polls += 1
-        if self.polls > 1:
-            raise KeyboardInterrupt
-        return dict(self.states)
 
 
 def negotiated(**kwargs):

@@ -7,9 +7,10 @@ in code:
                 "Neon Left":   {"range": [16, 30], "colour": "FF00FF"}}}
 
 A `button` entry names a control and lets the firmware resolve it to whatever
-LEDs that board actually has wired, so the profile works on any layout. A
-`range` entry addresses raw LED indexes instead, which is tied to the board it
-was written for.
+LEDs that board actually has wired, so the profile works on any layout. Where
+the board says a control owns several lights, all of them are lit. A `range`
+entry addresses raw LED indexes instead, which is tied to the board it was
+written for.
 
 SPDX-FileCopyrightText: © 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
@@ -18,8 +19,6 @@ import json
 import os
 
 from . import hlp
-
-BUTTON_TARGETS = {name.upper(): index for index, name in enumerate(hlp.BUTTON_NAMES)}
 
 
 class ProfileError(ValueError):
@@ -70,7 +69,7 @@ def load(path: str) -> dict:
             resolved[name] = (('range', start, count), rgb)
         else:
             control = str(entry['button']).upper()
-            target = BUTTON_TARGETS.get(control, hlp.SPECIAL_TARGETS.get(control))
+            target = hlp.CONTROL_TARGETS.get(control)
             if target is None:
                 raise ProfileError(f"light '{name}': unknown control '{entry['button']}'")
             resolved[name] = (('button', target), rgb)

@@ -32,6 +32,26 @@ M_ULTRA_LIGHTS = [(2, 0), (1, 1), (3, 2), (0, 3), (6, 4), (7, 5), (9, 6), (8, 7)
 PLAIN_LIGHTS = [(button_id, button_id) for button_id in range(16)]
 
 
+class OneShotConnection:
+    """A spice2x connection that answers one poll and then ends the run.
+
+    Ending it the way Ctrl-C does exercises the loop's own shutdown path rather
+    than a special case built for tests.
+    """
+
+    def __init__(self, states=None):
+        """Hold the light states this connection will report once."""
+        self.states = states or {}
+        self.polls = 0
+
+    def lights_read(self):
+        """Report the states once, then interrupt the loop."""
+        self.polls += 1
+        if self.polls > 1:
+            raise KeyboardInterrupt
+        return dict(self.states)
+
+
 class FakeBoard:
     """Answer Host Lighting requests the way a board at a given version would."""
 

@@ -132,10 +132,36 @@ SET_LIGHT_RGBW_MAX = 12         # [ordinal,R,G,B,W] entries, protocol v1.3
 LED_FORMAT_NAMES = {0: 'GRB', 1: 'RGB', 2: 'GRBW', 3: 'RGBW'}
 WHITE_LED_FORMATS = frozenset({2, 3})
 
-# button IDs 0-17 as indexed in the page 2 LED map, plus the specials
+# button IDs 0-17 as indexed in the page 2 LED map. That table is exactly these
+# eighteen and can never grow, so this stays a plain list of that length.
 BUTTON_NAMES = ['Up', 'Down', 'Left', 'Right', 'B1', 'B2', 'B3', 'B4', 'L1', 'R1', 'L2', 'R2',
                 'S1', 'S2', 'L3', 'R3', 'A1', 'A2']
 SPECIAL_TARGETS = {'PLED1': 24, 'PLED2': 25, 'PLED3': 26, 'PLED4': 27, 'TURBO': 28, 'CASE': 29}
+
+# The wider namespace the light table can report, added by protocol v1.1: A3 and
+# A4 at 18-19, E1-E12 at 30-41. Page 2 has no slot for these, so they appear
+# only on page 5. 20-23 are permanently unassigned - those gamepad bits are the
+# dpad in a second encoding rather than four more controls - so they are absent
+# here on purpose. From v1.1 the light table names them; only from v1.2 does
+# SET_BUTTONS stage them.
+EXTENDED_TARGETS = {'A3': 18, 'A4': 19}
+EXTENDED_TARGETS.update({f'E{n + 1}': 30 + n for n in range(12)})
+EXTENDED_CONTROLS = frozenset(EXTENDED_TARGETS.values())
+
+# every spelling a profile may use, and the reverse for reporting
+CONTROL_TARGETS = {name.upper(): index for index, name in enumerate(BUTTON_NAMES)}
+CONTROL_TARGETS.update(SPECIAL_TARGETS)
+CONTROL_TARGETS.update(EXTENDED_TARGETS)
+CONTROL_NAMES = dict(enumerate(BUTTON_NAMES))
+CONTROL_NAMES.update({value: name for name, value in SPECIAL_TARGETS.items()})
+CONTROL_NAMES.update({value: name for name, value in EXTENDED_TARGETS.items()})
+
+# Controls that are meant to be a single lamp, and so are worth expanding to all
+# of their lights. The player LEDs, turbo and the case strip are left out on
+# purpose: each already has a staging path that covers the whole of it in one
+# entry, and a case strip is routinely dozens of lights, so expanding one would
+# buy nothing and cost several extra reports in every frame.
+ONE_LAMP_CONTROLS = frozenset(range(0, 20)) | frozenset(range(30, 42))
 
 
 def build_request(command: int, sequence: int, payload: bytes = b'') -> bytes:
@@ -168,12 +194,7 @@ def control_name(button_id: int) -> str:
     :param button_id: protocol button ID
     :return: the control name, or the raw ID if it is not a known control
     """
-    if button_id < len(BUTTON_NAMES):
-        return BUTTON_NAMES[button_id]
-    for name, value in SPECIAL_TARGETS.items():
-        if value == button_id:
-            return name
-    return str(button_id)
+    return CONTROL_NAMES.get(button_id, str(button_id))
 
 
 class HostLightingError(RuntimeError):
@@ -452,6 +473,73 @@ class Capabilities:
         """
         return self.white_channel and (self.minor or 0) >= 3
 
+    def stages_by_name(self, button_id: int) -> bool:
+        """Whether SET_BUTTONS will colour this control on this firmware.
+
+        The extended controls are named by the light table from v1.1 but do not
+        stage by name until v1.2. Before then a SET_BUTTONS entry naming one is
+        simply counted as skipped, and the light table is the only route to it.
+
+        :param button_id: the control to ask about
+        :return: True if naming the control in a SET_BUTTONS entry will reach it
+        """
+        return not (button_id in EXTENDED_CONTROLS and (self.minor or 0) < 2)
+
+    def lights_owned_by(self, button_id: int) -> list:
+        """List the lights the board attributes to a control, ignoring synthesised rows.
+
+        A synthesised table is rebuilt from per-control configuration, so it
+        holds one row per control however many lights that control really
+        drives. Those rows cannot answer the question this is asked for, so they
+        are discarded rather than counted.
+
+        :param button_id: the control to ask about
+        :return: the board's records for that control, in ordinal order
+        """
+        return [record for record in self.lights
+                if record['button_id'] == button_id and not record['synthesised']]
+
+    def staging_plan(self) -> dict:
+        """Decide, per control, how a bare control name reaches all of its lights.
+
+        Only controls needing something other than a plain SET_BUTTONS entry
+        appear here, so on most boards this is empty and costs nothing.
+
+        Two shapes go in. A control the light table names but this firmware
+        cannot stage by name has to be coloured by raw index instead. And a
+        one-lamp control the board attributes several lights to gets all of them
+        staged explicitly - all of them, including the one SET_BUTTONS already
+        covered, because there is no sanctioned way to tell which one that was.
+        The redundant write is one entry of one report, and accepting it is the
+        only rule that is correct on both render pipelines.
+
+        :return: mapping of button ID to (stages by name, records to stage explicitly)
+        """
+        plan = {}
+        for button_id in {record['button_id'] for record in self.lights}:
+            records = self.lights_owned_by(button_id)
+            if not records:
+                continue
+            if not self.stages_by_name(button_id):
+                plan[button_id] = (False, records)
+            elif button_id in ONE_LAMP_CONTROLS and len(records) > 1:
+                plan[button_id] = (True, records)
+        return plan
+
+    def refresh(self, device) -> None:
+        """Re-read the pages a fingerprint change invalidates.
+
+        A fingerprint change means re-reading whichever of the capability pages
+        a host caches. Page 1 is re-read too, because the light-table feature
+        bit can go from clear to set once the board has finished LED setup, and
+        a host that enumerated early would otherwise never notice.
+
+        :param device: an opened HostLightingDevice
+        """
+        self.state = read_state(device)
+        self.led_map = read_led_map(device)
+        self.lights = read_light_table(device, self)
+
     @property
     def render_hz(self):
         """The board's render rate in Hz, or None if it did not say."""
@@ -483,6 +571,8 @@ class Capabilities:
                   'per-light staging' if self.per_light else 'no per-light staging']
         if self.outcome_mask:
             offers.append('outcome mask')
+        offers.append(f"renders at {self.render_hz} Hz" if self.render_hz
+                      else 'render rate unstated')
         white = 'yes' if self.white_channel else 'no'
         return f"board speaks HLP {spoken}{driven} - {', '.join(offers)} (white channel: {white})"
 
@@ -769,6 +859,28 @@ def read_protocol_version(device: HostLightingDevice) -> tuple:
     return reply[7], reply[8]
 
 
+def read_light_table(device: HostLightingDevice, caps: Capabilities) -> list:
+    """Read the board's light table, where it has one to report.
+
+    Gated on the page 1 feature bit as well as the version, because a cleared
+    bit is a promise the page returns nothing rather than a hint that it might.
+    Firmware too old for the page answers INVALID_ARG, which the protocol says
+    to read as "not supported by this firmware" rather than as a failure, so the
+    oldest boards take the quietest path rather than the loudest one.
+
+    :param device: an opened HostLightingDevice
+    :param caps: the negotiated capabilities
+    :return: the board's light records, empty where it has none to give
+    """
+    if not caps.light_table:
+        return []
+    try:
+        records, _ = device.read_lights()
+    except HostLightingRejected:
+        return []
+    return records
+
+
 def negotiate(device: HostLightingDevice, force: bool = False) -> Capabilities:
     """Agree what the board can do, once, before any streaming starts.
 
@@ -792,9 +904,11 @@ def negotiate(device: HostLightingDevice, force: bool = False) -> Capabilities:
             f"v{SUPPORTED_MAJOR}.0 to v{SUPPORTED_MAJOR}.{MAX_SUPPORTED_MINOR}. A different "
             f"major version may have changed commands this bridge relies on, so it is not "
             f"driven blind. Pass --force to run anyway.")
-    return Capabilities(major=major, minor=min(minor, MAX_SUPPORTED_MINOR),
+    caps = Capabilities(major=major, minor=min(minor, MAX_SUPPORTED_MINOR),
                         reported=(major, minor), state=read_state(device),
                         led_map=read_led_map(device), forced=unsupported)
+    caps.lights = read_light_table(device, caps)
+    return caps
 
 
 def open_device(board_id_prefix: str = '') -> HostLightingDevice:

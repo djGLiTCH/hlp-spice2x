@@ -92,7 +92,10 @@ itself within two seconds if the bridge is killed or the game exits.
 
 - **`button`** names a control: `Up Down Left Right B1 B2 B3 B4 L1 R1 L2 R2 S1
   S2 L3 R3 A1 A2`, plus `PLED1`-`PLED4`, `TURBO` and `CASE` for the whole case
-  strip. Leave it empty to ignore that light.
+  strip. `A3`, `A4` and `E1`-`E12` are also accepted on boards whose firmware
+  reports them, which needs HLP v1.1 or newer. Leave it empty to ignore that
+  light. Where the board says a control owns several lights, such as a layout
+  with two Up buttons, all of them are lit.
 - **`range`** addresses raw LED indexes as `[start, count]`, for lights that do
   not correspond to a control. Unlike `button`, this is tied to the board it was
   written for.
