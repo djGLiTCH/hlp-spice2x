@@ -38,10 +38,7 @@ class FakeHid:
 
 def make_device(**kwargs):
     """Build a HostLightingDevice around a FakeHid without opening real hardware."""
-    device = hlp.HostLightingDevice.__new__(hlp.HostLightingDevice)
-    device.device = FakeHid(**kwargs)
-    device.sequence = 0
-    return device
+    return hlp.HostLightingDevice.from_hid(FakeHid(**kwargs))
 
 
 def test_send_reports_a_disconnect_not_a_generic_error():

@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="write a skeleton profile from the running game and exit")
     parser.add_argument("--board-id", default="",
                         help="hex prefix of the board ID, to pick one of several")
-    parser.add_argument("--fps", type=float, default=60.0, help="poll rate (default 60)")
+    parser.add_argument("--fps", type=float, help="poll rate (default 60)")
     parser.add_argument("--timeout", type=int, default=2000,
                         help="takeover keepalive timeout in ms (default 2000)")
     parser.add_argument("--overlay", action="store_true",
@@ -36,6 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "brightness setting (useful when the board is configured dim)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print frames instead of driving a board")
+    parser.add_argument("--force", action="store_true",
+                        help="run even against a protocol major version this bridge does not "
+                             "support, which is unsupported and for testing only")
     return parser
 
 
@@ -48,7 +51,7 @@ def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.fps <= 0:
+    if args.fps is not None and args.fps <= 0:
         parser.error("--fps must be greater than zero")
     # the timeout travels as a 16-bit field, and the firmware floors it at 100 ms
     if not 100 <= args.timeout <= 0xFFFF:
@@ -107,7 +110,8 @@ def run_bridge(args) -> int:
 
     try:
         bridge.run(connection, profile, device=device, fps=args.fps, timeout_ms=args.timeout,
-                   overlay=args.overlay, full_brightness=args.full_brightness)
+                   overlay=args.overlay, full_brightness=args.full_brightness,
+                   force=args.force)
     finally:
         if device is not None:
             try:

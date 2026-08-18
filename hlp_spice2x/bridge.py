@@ -12,6 +12,9 @@ import time
 
 from . import hlp, profile as profile_module
 
+# used when nobody has said otherwise and the board has not either
+DEFAULT_FPS = 60.0
+
 
 def send_frame(device, frame, clear_first=False) -> bool:
     """Stage a resolved frame and publish it.
@@ -84,31 +87,37 @@ def frame_stats(frames: int, misses: int, started: float) -> str:
             f"{misses} commits unacknowledged")
 
 
-def run(connection, profile, device=None, fps=60.0, timeout_ms=2000,
-        overlay=False, full_brightness=False, report=print):
+def run(connection, profile, device=None, fps=None, timeout_ms=2000,
+        overlay=False, full_brightness=False, force=False, report=print):
     """Poll spice2x and stream frames until interrupted or disconnected.
 
     :param connection: an open SpiceConnection
     :param profile: a loaded profile
     :param device: an opened HostLightingDevice, or None for a dry run
-    :param fps: poll rate
+    :param fps: poll rate, or None to resolve one after the handshake
     :param timeout_ms: takeover keepalive timeout sent in SET_MODE
     :param overlay: overlay onto the board's animations instead of taking the whole frame
     :param full_brightness: ignore the board's brightness setting
+    :param force: run against a protocol major version this bridge does not support
     :param report: callable used for progress output
     """
     fingerprint = None
     frames = misses = 0
     started = time.monotonic()
+    caps = hlp.Capabilities.absent()
 
     try:
         if device is not None:
-            reply = device.request_ok(hlp.CMD_PING)
-            if reply[3:7] != b'GPHL' or (reply[7], reply[8]) < hlp.REQUIRED_VERSION:
-                raise hlp.HostLightingError("handshake failed: need protocol 1.0 or later")
+            caps = hlp.negotiate(device, force=force)
             _, label, firmware = hlp.read_identity(device)
             report(f"board: {label} ({firmware})")
-            fingerprint = hlp.read_fingerprint(device)
+            if caps.forced:
+                report(f"WARNING: this bridge does not support Host Lighting "
+                       f"v{caps.reported[0]}.{caps.reported[1]}, and --force was given. "
+                       f"Commands may not mean what this bridge thinks they mean, so "
+                       f"nothing below this line is reliable.")
+            report(caps.summary())
+            fingerprint = caps.fingerprint
             # SET_MODE: takeover mode, keepalive timeout ms (LE), apply board brightness
             device.request_ok(hlp.CMD_SET_MODE,
                               bytes([1 if overlay else 0, timeout_ms & 0xFF,
@@ -121,6 +130,10 @@ def run(connection, profile, device=None, fps=60.0, timeout_ms=2000,
                 report(f"warning: {len(unmapped)} mapped control(s) have no LED on this "
                        f"board: {', '.join(unmapped)}")
 
+        # resolved here rather than at argparse time, so that the board gets a
+        # say in it: nothing is known about the board until the handshake above
+        if fps is None:
+            fps = DEFAULT_FPS
         period = 1.0 / fps
         keepalive_due = time.monotonic() + timeout_ms / 2000.0
         last_frame = None
@@ -160,7 +173,7 @@ def run(connection, profile, device=None, fps=60.0, timeout_ms=2000,
             # (which produces no new frames) still notices a reconfiguration
             if device is not None and time.monotonic() >= fingerprint_due:
                 fingerprint_due = time.monotonic() + 5.0
-                current = hlp.read_fingerprint(device)
+                current = hlp.read_state(device)['fingerprint']
                 if current != fingerprint:
                     ranges = any(target[0] == 'range' for target, _ in profile.values())
                     report("board LED map changed" + (" - check the profile's raw ranges"

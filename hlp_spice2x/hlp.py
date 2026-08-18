@@ -57,7 +57,16 @@ import time
 USAGE_PAGE = 0xFF47
 USAGE = 0x4C
 REPORT_SIZE = 64
-REQUIRED_VERSION = (1, 0)
+
+# The protocol freezes command IDs and existing payload layouts within a major
+# version: a minor version may only add, and only a major version may change
+# what is already there. So a board reporting a minor above the highest known
+# here still keeps every promise this client relies on, and is driven as the
+# highest known rather than refused; a different major may have changed any of
+# them underneath, and is refused.
+SUPPORTED_MAJOR = 1
+MAX_SUPPORTED_MINOR = 3
+PING_MAGIC = b'GPHL'
 
 # command IDs, grouped by function range
 CMD_PING = 0x01                 # session and discovery, 0x01-0x0F
@@ -180,6 +189,14 @@ class HostLightingTimeout(HostLightingError):
 
     Replies are best-effort while streaming, so a caller may reasonably carry
     on after one of these.
+    """
+
+
+class HostLightingIncompatible(HostLightingError):
+    """The board speaks a protocol major version this client does not.
+
+    Distinct from a rejected command: nothing is wrong with the board or the
+    link, the two ends simply do not agree on what the commands mean.
     """
 
 
@@ -345,6 +362,131 @@ def decode_lights(reply: bytes) -> dict:
     }
 
 
+class Capabilities:
+    """What the board on the other end can do, decided once at connect.
+
+    Call sites ask this object what is available rather than comparing version
+    numbers, so a new protocol version adds a field here instead of a version
+    comparison at every branch that cares.
+
+    Two of these deliberately do not follow from the version. The light table is
+    gated on the page 1 feature bit as well as the version, because a board that
+    enumerates before its render core has populated the light registry will
+    legitimately report the bit clear and answer page 5 with nothing. And the
+    LED framework byte is not consulted at all: the protocol says to branch on
+    the feature bits and the per-record flags and never on it, and a board that
+    does not report a framework is not thereby a lesser board.
+    """
+
+    def __init__(self, major=None, minor=None, reported=None, state=None, led_map=None,
+                 forced=False):
+        """Hold a negotiated version and the capability pages read alongside it.
+
+        :param major: the negotiated major version, or None for no board
+        :param minor: the negotiated minor version, clamped to what is supported
+        :param reported: the (major, minor) the board actually stated
+        :param state: the decoded GET_CAPS page 1
+        :param led_map: the decoded GET_CAPS page 2
+        :param forced: whether an unsupported major version was overridden
+        """
+        self.major = major
+        self.minor = minor
+        self.reported = reported
+        self.forced = forced
+        self.state = state or {}
+        self.led_map = led_map or {}
+        self.lights = []
+
+    @classmethod
+    def absent(cls):
+        """Capabilities for a run with no board, where nothing can be negotiated.
+
+        Every capability answers no, so a dry run takes the same code paths as
+        the oldest board rather than needing a check for the absence of a board
+        at each one.
+
+        :return: a Capabilities describing no board at all
+        """
+        return cls()
+
+    @property
+    def connected(self) -> bool:
+        """Whether these capabilities came from a board."""
+        return self.major is not None
+
+    @property
+    def light_table(self) -> bool:
+        """Whether page 5 will return entries.
+
+        Both halves matter: the page does not exist before v1.1, and a cleared
+        feature bit is a promise it returns nothing rather than a hint that it
+        might. The bit can go from clear to set on a fingerprint change, so this
+        is re-derived from the current page 1 rather than frozen at connect.
+        """
+        return (self.minor or 0) >= 1 and bool(self.state.get('features', 0) & FEATURE_LIGHT_TABLE)
+
+    @property
+    def per_light(self) -> bool:
+        """Whether a single light can be staged by its ordinal (SET_LIGHT, v1.2)."""
+        return (self.minor or 0) >= 2
+
+    @property
+    def outcome_mask(self) -> bool:
+        """Whether a staging reply names which entries were skipped (v1.3)."""
+        return (self.minor or 0) >= 3
+
+    @property
+    def white_channel(self) -> bool:
+        """Whether the board's chain has a white emitter for a W component to reach."""
+        return has_white_channel(self.led_map.get('colour_format', 0))
+
+    @property
+    def host_white(self) -> bool:
+        """Whether a host-supplied white component is honoured as sent.
+
+        Before v1.3 an achromatic colour is mapped onto the white emitter by the
+        firmware itself and a host-supplied W is ignored, so sending the
+        textbook subtractive white renders dark. Needing both halves is the
+        point: a white chain on old firmware is not a white channel a host can
+        drive.
+        """
+        return self.white_channel and (self.minor or 0) >= 3
+
+    @property
+    def render_hz(self):
+        """The board's render rate in Hz, or None if it did not say."""
+        return self.state.get('render_hz')
+
+    @property
+    def led_extent(self) -> int:
+        """The board's own LED extent, falling back to the firmware buffer ceiling."""
+        return self.led_map.get('led_extent') or MAX_LEDS
+
+    @property
+    def fingerprint(self):
+        """The LED-map fingerprint, which changes when the map does."""
+        return self.state.get('fingerprint')
+
+    def summary(self) -> str:
+        """Name the negotiated version and what it buys, for the startup line.
+
+        Multi-version support that cannot be seen at runtime cannot be supported
+        in the field, so this is printed on every run rather than under a flag.
+
+        :return: a one-line summary of the negotiated capabilities
+        """
+        if not self.connected:
+            return "no board: running without one, so nothing was negotiated"
+        spoken = f"v{self.reported[0]}.{self.reported[1]}"
+        driven = '' if self.reported[1] == self.minor else f", driven as v{self.major}.{self.minor}"
+        offers = ['light table' if self.light_table else 'no light table',
+                  'per-light staging' if self.per_light else 'no per-light staging']
+        if self.outcome_mask:
+            offers.append('outcome mask')
+        white = 'yes' if self.white_channel else 'no'
+        return f"board speaks HLP {spoken}{driven} - {', '.join(offers)} (white channel: {white})"
+
+
 class HostLightingDevice:
     """One GP2040-CE board's Host Lighting interface."""
 
@@ -354,9 +496,29 @@ class HostLightingDevice:
         :param path: platform-specific hidapi device path from enumeration
         """
         hid = _import_hid()
-        self.device = hid.device()
-        self.device.open_path(path)
-        self.device.set_nonblocking(True)
+        device = hid.device()
+        device.open_path(path)
+        device.set_nonblocking(True)
+        self._bind(device)
+
+    @classmethod
+    def from_hid(cls, device):
+        """Wrap an already-open hidapi device object.
+
+        The one seam through which a device can be built around something other
+        than a real HID path, so a fake board and a real one are initialised by
+        the same code and cannot drift apart as per-session state is added.
+
+        :param device: an object with the hidapi read/write/close interface
+        :return: a HostLightingDevice driving it
+        """
+        wrapper = cls.__new__(cls)
+        wrapper._bind(device)
+        return wrapper
+
+    def _bind(self, device) -> None:
+        """Attach an open hidapi device and initialise per-session state."""
+        self.device = device
         self.sequence = 0
 
     def close(self) -> None:
@@ -572,19 +734,67 @@ def read_identity(device: HostLightingDevice) -> tuple:
     return board_id, label, firmware
 
 
-def read_fingerprint(device: HostLightingDevice) -> int:
-    """Read the LED-map fingerprint from GET_CAPS page 1, which changes if the map does.
-
-    Page 1 reply layout: [3] input mode, [4] profile, [5] brightness step,
-    [6] host-assigned player, [7..10] LED-map fingerprint (little endian),
-    [11] current animation index. Byte [5] is a step index into the board's
-    brightness steps, not a 0-255 level.
+def read_state(device: HostLightingDevice) -> dict:
+    """Read and decode GET_CAPS page 1, the board's runtime state.
 
     :param device: an opened HostLightingDevice
-    :return: the LED-map fingerprint
+    :return: the decoded page, including the LED-map fingerprint
     """
-    reply = device.get_caps_page(CAPS_PAGE_STATE)
-    return int.from_bytes(reply[7:11], 'little')
+    return decode_state(device.get_caps_page(CAPS_PAGE_STATE))
+
+
+def read_led_map(device: HostLightingDevice) -> dict:
+    """Read and decode GET_CAPS page 2, the per-control LED map.
+
+    :param device: an opened HostLightingDevice
+    :return: the decoded page
+    """
+    return decode_led_map(device.get_caps_page(CAPS_PAGE_LED_MAP))
+
+
+def read_protocol_version(device: HostLightingDevice) -> tuple:
+    """Read the board's protocol version from its PING reply.
+
+    PING reply layout: [3..6] the ASCII magic "GPHL", [7] major, [8] minor.
+
+    :param device: an opened HostLightingDevice
+    :return: the (major, minor) the board reports
+    :raises HostLightingError: if the reply is not a Host Lighting one
+    """
+    reply = device.request_ok(CMD_PING)
+    _require_length(reply, 9, 'PING')
+    if reply[3:7] != PING_MAGIC:
+        raise HostLightingError("handshake failed: this interface did not answer as "
+                                "a Host Lighting one")
+    return reply[7], reply[8]
+
+
+def negotiate(device: HostLightingDevice, force: bool = False) -> Capabilities:
+    """Agree what the board can do, once, before any streaming starts.
+
+    A minor version above the highest supported is clamped down rather than
+    refused: within a major version the protocol only ever adds, so a newer
+    board still honours everything this client knows how to ask for. A different
+    major version is refused, because it is allowed to have changed the meaning
+    of commands this client sends without asking.
+
+    :param device: an opened HostLightingDevice
+    :param force: run against an unsupported major version anyway
+    :return: the negotiated Capabilities
+    :raises HostLightingIncompatible: on an unsupported major version, unless forced
+    :raises HostLightingError: if the board does not answer as a Host Lighting one
+    """
+    major, minor = read_protocol_version(device)
+    unsupported = major != SUPPORTED_MAJOR
+    if unsupported and not force:
+        raise HostLightingIncompatible(
+            f"board speaks Host Lighting v{major}.{minor}, and this bridge supports "
+            f"v{SUPPORTED_MAJOR}.0 to v{SUPPORTED_MAJOR}.{MAX_SUPPORTED_MINOR}. A different "
+            f"major version may have changed commands this bridge relies on, so it is not "
+            f"driven blind. Pass --force to run anyway.")
+    return Capabilities(major=major, minor=min(minor, MAX_SUPPORTED_MINOR),
+                        reported=(major, minor), state=read_state(device),
+                        led_map=read_led_map(device), forced=unsupported)
 
 
 def open_device(board_id_prefix: str = '') -> HostLightingDevice:
