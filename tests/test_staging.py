@@ -106,7 +106,10 @@ def test_a_whole_strip_control_is_never_expanded():
     """
     board = stage({('button', 29): RED}, version=(1, 3), lights=M_ULTRA_LIGHTS)
     assert named(board) == [29]
+    # both, because which one an expansion would use depends on the version:
+    # raw ranges before v1.2 and ordinals from v1.2, and this board is v1.3
     assert ranges(board) == []
+    assert lights(board) == []
 
 
 def test_an_extended_control_is_staged_by_index_before_it_can_be_staged_by_name():
@@ -475,21 +478,36 @@ def test_a_per_light_target_carries_white_to_its_own_ordinal():
 
 
 def test_a_raw_range_carries_white_through_the_rgbw_range_command():
-    """Test that a range entry asking for white uses SET_RANGE_RGBW."""
-    profile = {'Neon': (('range', 16, 2), (255, 255, 255, 0))}
-    board = stage({('range', 16, 2): (255, 255, 255, 0)}, profile=profile, version=(1, 3),
+    """Test that a range entry asking for white uses SET_RANGE_RGBW.
+
+    Long enough to cross a report boundary, because the RGBW form carries fewer
+    pixels per report than the RGB one and a range that fits in a single report
+    would never exercise the split.
+    """
+    profile = {'Neon': (('range', 16, 30), (255, 255, 255, 0))}
+    board = stage({('range', 16, 30): (255, 255, 255, 0)}, profile=profile, version=(1, 3),
                   colour_format=2, lights=M_ULTRA_LIGHTS)
     payloads = board.staged(hlp.CMD_SET_RANGE_RGBW)
-    assert len(payloads) == 1
-    assert payloads[0][:2] == bytes([16, 2])
+    assert [(payload[0], payload[1]) for payload in payloads] == [(16, 15), (31, 15)]
     assert payloads[0][2:6] == bytes((0, 0, 0, 255))
 
 
 def test_white_on_a_control_with_no_light_table_entry_is_reported():
-    """Test that a control the table cannot break down is named, not silently dropped."""
+    """Test that a control the table cannot break down is named, not silently dropped.
+
+    White can only be sent to a light named individually, so a control the table
+    says nothing about has nowhere to put it. The colour still has to reach the
+    board as plain RGB rather than not at all, which is the half a warning
+    string cannot show.
+    """
     profile = {'B2': (('button', 5), (255, 255, 255, 0))}
     _, caps, _ = connected(version=(1, 3), colour_format=2, lights=[(0, 0)])
     assert 'B2' in bridge.white_warnings(profile, caps)[0]
+
+    board = stage({('button', 5): (255, 255, 255, 0)}, profile=profile, version=(1, 3),
+                  colour_format=2, lights=[(0, 0)])
+    assert named(board) == [5]
+    assert white_lights(board) == []
 
 
 def test_a_raw_range_past_the_board_is_reported_at_connect():

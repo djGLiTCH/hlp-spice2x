@@ -1,6 +1,7 @@
-# the whole test suite, including its stub server, so a source distribution
-# can actually run the tests rather than shipping half of them
-recursive-include tests *.py
+# the whole test suite, including its stub server and the guide to what each
+# file is for, so a source distribution can actually run and follow the tests
+# rather than shipping half of them
+recursive-include tests *.py *.md
 
 # example profile and the guide to capturing real ones
 recursive-include profiles *.json *.md
