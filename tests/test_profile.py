@@ -168,3 +168,63 @@ def test_skeleton_lists_every_light(tmp_path):
 def test_empty_frame_is_described(tmp_path):
     """Test that a frame with nothing lit renders as readable text."""
     assert profile_module.format_frame({}) == '(all lights off)'
+
+
+def test_an_index_picks_one_light_of_a_control(tmp_path):
+    """Test that an indexed entry resolves to an unresolved per-light target.
+
+    Which ordinal it names is a question only a board can answer, so load keeps
+    the control and the index and leaves the resolving to the handshake.
+    """
+    path = write(tmp_path, {'Second Up': {'button': 'UP', 'index': 1, 'colour': 'FF0000'}})
+    profile, _ = profile_module.load(path)
+    assert profile['Second Up'] == (('light', 0, 1), (0xFF, 0, 0))
+
+
+def test_index_zero_is_a_light_and_not_an_absent_key(tmp_path):
+    """Test that the first light of a control is not mistaken for no index at all.
+
+    Index 0 is both valid and falsy, so testing the value rather than its
+    presence would quietly turn it back into a bare control name.
+    """
+    path = write(tmp_path, {'First Up': {'button': 'UP', 'index': 0}})
+    profile, _ = profile_module.load(path)
+    assert profile['First Up'][0] == ('light', 0, 0)
+
+
+@pytest.mark.parametrize('entry', [{'index': 1}, {'button': '', 'index': 1}])
+def test_an_index_with_nothing_to_index_into_is_an_error(tmp_path, entry):
+    """Test that an index without a control is reported rather than skipped.
+
+    Both shapes would otherwise fall into a path that treats them as an unfilled
+    skeleton line, which is the wrong answer for an entry someone half filled in.
+    """
+    with pytest.raises(profile_module.ProfileError, match='needs a'):
+        profile_module.load(write(tmp_path, {'A': entry}))
+
+
+@pytest.mark.parametrize('index', [-1, 'first', None])
+def test_an_index_that_is_not_a_light_number_is_rejected(tmp_path, index):
+    """Test that a negative or non-numeric index fails at load rather than at connect."""
+    with pytest.raises(profile_module.ProfileError, match='index'):
+        profile_module.load(write(tmp_path, {'A': {'button': 'UP', 'index': index}}))
+
+
+def test_the_extended_controls_are_accepted(tmp_path):
+    """Test that the names only a light table can report resolve to their IDs."""
+    path = write(tmp_path, {'a': {'button': 'A3'}, 'b': {'button': 'E1'},
+                            'c': {'button': 'E12'}})
+    profile, _ = profile_module.load(path)
+    assert profile['a'][0] == ('button', 18)
+    assert profile['b'][0] == ('button', 30)
+    assert profile['c'][0] == ('button', 41)
+
+
+def test_a_per_light_target_renders_symbolically_without_a_board():
+    """Test that a dry run shows the entry as written, since it has no ordinal.
+
+    A dry run has no board and so no light table, which is the only thing that
+    could turn an index into an ordinal. Showing the control and the index is
+    what the profile said, and it is checkable by eye.
+    """
+    assert profile_module.format_frame({('light', 0, 1): (255, 0, 0)}) == 'Up[1]=#FF0000'

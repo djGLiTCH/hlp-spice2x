@@ -8,9 +8,15 @@ in code:
 
 A `button` entry names a control and lets the firmware resolve it to whatever
 LEDs that board actually has wired, so the profile works on any layout. Where
-the board says a control owns several lights, all of them are lit. A `range`
-entry addresses raw LED indexes instead, which is tied to the board it was
-written for.
+the board says a control owns several lights, all of them are lit. Adding an
+`index` picks out one of them instead, counting as the board's own light table
+lists them, which stays portable in the control it names but not in the light it
+picks. A `range` entry addresses raw LED indexes instead, which is tied to the
+board it was written for.
+
+Targets are resolved as far as they can be without a board. Which ordinal an
+`index` names is a question only the board can answer, so it is left until the
+handshake and refused there if the firmware or the board cannot honour it.
 
 SPDX-FileCopyrightText: © 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
@@ -30,8 +36,8 @@ def load(path: str) -> dict:
 
     :param path: path to the profile JSON
     :return: (profile, warnings), where profile maps a light name to
-        (target, rgb) with target being ('button', id) or
-        ('range', start, count), and warnings is a list of non-fatal
+        (target, rgb) with target being ('button', id), ('light', id, index)
+        or ('range', start, count), and warnings is a list of non-fatal
         complaints about entries that were skipped
     """
     with open(path, encoding='utf-8') as handle:
@@ -42,6 +48,10 @@ def load(path: str) -> dict:
     for name, entry in (profile.get('lights') or {}).items():
         if not isinstance(entry, dict):
             raise ProfileError(f"light '{name}': expected an object, got {type(entry).__name__}")
+        # index 0 is a real light and a falsy one, so presence is the test, and an
+        # index with nothing to index into is a mistake rather than a blank line
+        if 'index' in entry and not entry.get('button'):
+            raise ProfileError(f"light '{name}': 'index' needs a 'button' to index into")
         if 'button' not in entry and 'range' not in entry:
             # neither key at all is more likely a typo than a deliberate skip
             warnings.append(f"light '{name}' has no 'button' or 'range' key, ignoring")
@@ -72,7 +82,17 @@ def load(path: str) -> dict:
             target = hlp.CONTROL_TARGETS.get(control)
             if target is None:
                 raise ProfileError(f"light '{name}': unknown control '{entry['button']}'")
-            resolved[name] = (('button', target), rgb)
+            if 'index' in entry:
+                try:
+                    index = int(entry['index'])
+                except (TypeError, ValueError):
+                    raise ProfileError(f"light '{name}': 'index' must be a whole number, "
+                                       f"got {entry['index']!r}") from None
+                if index < 0:
+                    raise ProfileError(f"light '{name}': 'index' cannot be negative")
+                resolved[name] = (('light', target, index), rgb)
+            else:
+                resolved[name] = (('button', target), rgb)
 
     if not resolved:
         raise ProfileError(f"{path} has no mapped lights - fill in the 'button' fields first")
@@ -134,7 +154,12 @@ def format_frame(frame: dict) -> str:
         return "(all lights off)"
     parts = []
     for target, rgb in sorted(frame.items(), key=lambda item: str(item[0])):
-        label = (hlp.control_name(target[1]) if target[0] == 'button'
-                 else f"range@{target[1]}+{target[2]}")
+        if target[0] == 'button':
+            label = hlp.control_name(target[1])
+        elif target[0] == 'light':
+            # no board, so no ordinal: the entry is shown as the profile wrote it
+            label = f"{hlp.control_name(target[1])}[{target[2]}]"
+        else:
+            label = f"range@{target[1]}+{target[2]}"
         parts.append(f"{label}=#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}")
     return ' '.join(parts)

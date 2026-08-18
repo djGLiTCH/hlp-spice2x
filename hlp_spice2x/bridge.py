@@ -34,7 +34,21 @@ def stage_range(device, start, count, rgb) -> None:
         device.send(hlp.CMD_SET_RANGE, bytes([start + offset, chunk]) + bytes(rgb) * chunk)
 
 
-def send_frame(device, frame, clear_first=False, plan=None) -> bool:
+def stage_group(device, operations) -> None:
+    """Emit one group of staging operations, batching the per-light entries.
+
+    :param device: an opened HostLightingDevice
+    :param operations: (operation, rgb) pairs, as a staging map produces them
+    """
+    entries = [(operation[1], *rgb) for operation, rgb in operations if operation[0] == 'light']
+    if entries:
+        device.send_lights(entries)
+    for operation, rgb in operations:
+        if operation[0] == 'range':
+            stage_range(device, operation[1], operation[2], rgb)
+
+
+def send_frame(device, frame, clear_first=False, staging=None) -> bool:
     """Stage a resolved frame and publish it.
 
     The board's staging buffer persists between commits, so a control that
@@ -44,39 +58,44 @@ def send_frame(device, frame, clear_first=False, plan=None) -> bool:
 
     The three passes are emitted in a fixed order, and the order is load-bearing
     because they all write into one staging buffer where the last write to a
-    pixel wins. Controls first, then the extra lights of a control, then raw
-    ranges.
+    pixel wins. Control names first, then the extra lights those names imply,
+    then everything the profile asked for by name of a single light or by raw
+    index.
 
     The expansion has to follow the control pass rather than precede it. Naming
-    a control colours every light of it on one of the two render pipelines, so a
+    a control colours all of its lights on one of the two render pipelines, so a
     SET_BUTTONS entry emitted afterwards would re-colour the very pixels the
     expansion had just set, undoing it within the same frame and only on the
-    pipeline that is harder to reproduce. Raw ranges go last so that addressing
-    a pixel explicitly always beats reaching it through a control name.
+    pipeline that is harder to reproduce. What the profile asked for explicitly
+    goes last, so saying exactly which light is meant always beats reaching it
+    through a control name.
 
     :param device: an opened HostLightingDevice
     :param frame: a resolved frame
     :param clear_first: whether to clear staging before staging this frame
-    :param plan: the board's per-control staging plan, or None to stage every
-        control by name and expand nothing
+    :param staging: how each target reaches the board's lights, from
+        staging_for, or None to stage every control by name and expand nothing
     :return: False if the COMMIT went unacknowledged (the frame still applied)
     """
     if clear_first:
         device.send(hlp.CMD_CLEAR)
 
-    buttons, extra, ranges = [], [], []
+    buttons, implied, asked = [], [], []
     for target, rgb in frame.items():
-        if target[0] == 'button':
-            by_name, records = (plan or {}).get(target[1], (True, ()))
-            if by_name:
-                buttons.append((target[1], rgb))
-            extra.extend((record['first_led'], record['led_count'], rgb) for record in records)
-        elif target[0] == 'range':
-            ranges.append((target[1], target[2], rgb))
-        else:
+        if target[0] == 'range':
+            asked.append((('range', target[1], target[2]), rgb))
+            continue
+        if target[0] not in ('button', 'light'):
             # staging is fire-and-forget, so a target kind no pass below
             # recognises would light nothing and report nothing either
             raise ValueError(f"frame carries an unknown target kind: {target[0]!r}")
+        if target[0] == 'light' and target not in (staging or {}):
+            raise ValueError(f"per-light target {target} was never resolved against a board")
+        by_name, operations = (staging or {}).get(target, (True, ()))
+        if by_name:
+            buttons.append((target[1], rgb))
+        group = implied if target[0] == 'button' else asked
+        group.extend((operation, rgb) for operation in operations)
 
     for offset in range(0, len(buttons), hlp.SET_BUTTONS_MAX):
         batch = buttons[offset:offset + hlp.SET_BUTTONS_MAX]
@@ -87,8 +106,8 @@ def send_frame(device, frame, clear_first=False, plan=None) -> bool:
             raise ValueError("SET_BUTTONS carries three-byte colours only")
         device.send(hlp.CMD_SET_BUTTONS, payload)
 
-    for start, count, rgb in extra + ranges:
-        stage_range(device, start, count, rgb)
+    stage_group(device, implied)
+    stage_group(device, asked)
 
     try:
         device.request_ok(hlp.CMD_COMMIT, timeout=0.25)
@@ -142,6 +161,66 @@ def validate_targets(device, profile, caps) -> tuple:
     return unmapped, unreachable
 
 
+def light_operation(caps, button_id, index) -> tuple:
+    """Resolve one per-light profile target against the board's light table.
+
+    Three different things can go wrong here and they want three different
+    answers, because they send the user to three different places: firmware too
+    old to stage a single light at all, a board whose table cannot describe
+    which lights belong to a control, and an index past the end of a control
+    that does have a table.
+
+    :param caps: the negotiated capabilities
+    :param button_id: the control being indexed into
+    :param index: which of that control's lights, in the order the table lists them
+    :return: the staging operation that colours that light
+    :raises hlp.HostLightingIncompatible: if the firmware predates per-light staging
+    :raises profile_module.ProfileError: if this board cannot offer that light
+    """
+    name = hlp.control_name(button_id)
+    if not caps.per_light:
+        raise hlp.HostLightingIncompatible(
+            f"the profile targets {name}[{index}], and colouring one light of a control needs "
+            f"Host Lighting v1.2 or newer; this board reports "
+            f"v{caps.reported[0]}.{caps.reported[1]}")
+    if not caps.light_table:
+        raise profile_module.ProfileError(
+            f"{name}[{index}] cannot be resolved: this board reported no light table, so which "
+            f"of its lights belong to {name} is not knowable")
+    records = caps.lights_owned_by(button_id)
+    if not records and caps.names_control(button_id):
+        raise profile_module.ProfileError(
+            f"{name}[{index}] cannot be resolved: this board's light table is synthesised from "
+            f"its per-control configuration, so it describes one light per control however many "
+            f"that control really drives. This is a board limitation, not a firmware one")
+    if index >= len(records):
+        raise profile_module.ProfileError(
+            f"{name}[{index}] is out of range: this board gives {name} {len(records)} "
+            f"light{'' if len(records) == 1 else 's'}")
+    return caps.stage_op(records[index])
+
+
+def staging_for(profile, caps) -> dict:
+    """Work out how each of the profile's targets reaches the board's lights.
+
+    Built at connect and again whenever the board says its LED map changed,
+    never per frame. The answers depend on the board, and the board only changes
+    its mind when it says so.
+
+    :param profile: a loaded profile
+    :param caps: the negotiated capabilities
+    :return: mapping of target to (stage by control name, staging operations)
+    :raises hlp.HostLightingIncompatible: if the firmware cannot honour the profile
+    :raises profile_module.ProfileError: if the board cannot honour the profile
+    """
+    staging = {('button', button_id): entry
+               for button_id, entry in caps.staging_plan().items()}
+    for target, _ in profile.values():
+        if target[0] == 'light':
+            staging[target] = (False, [light_operation(caps, target[1], target[2])])
+    return staging
+
+
 def resolve_stream_rate(fps, caps) -> tuple:
     """Decide how fast to stream, and why.
 
@@ -188,12 +267,14 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
     :param full_brightness: ignore the board's brightness setting
     :param force: run against a protocol major version this bridge does not support
     :param report: callable used for progress output
+    :raises hlp.HostLightingIncompatible: if the board's firmware cannot honour the profile
+    :raises profile_module.ProfileError: if the board itself cannot honour the profile
     """
     fingerprint = None
     frames = misses = 0
     started = time.monotonic()
     caps = hlp.Capabilities.absent()
-    plan = {}
+    staging = {}
 
     try:
         if device is not None:
@@ -221,9 +302,10 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
             if unreachable:
                 report(f"warning: {len(unreachable)} mapped control(s) need Host Lighting "
                        f"v1.2 or newer to reach: {', '.join(unreachable)}")
-            plan = caps.staging_plan()
-            several = sorted(hlp.control_name(button_id)
-                             for button_id, (_, records) in plan.items() if len(records) > 1)
+            staging = staging_for(profile, caps)
+            several = sorted(hlp.control_name(target[1])
+                             for target, (_, operations) in staging.items()
+                             if target[0] == 'button' and len(operations) > 1)
             if several:
                 report(f"controls the board gives more than one light, all of which will be "
                        f"lit: {', '.join(several)}")
@@ -255,7 +337,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                 if device is None:
                     report(f"frame:{' [clear]' if departed else ''} "
                            f"{profile_module.format_frame(frame)}")
-                elif not send_frame(device, frame, clear_first=departed, plan=plan):
+                elif not send_frame(device, frame, clear_first=departed, staging=staging):
                     misses += 1
                 last_frame = frame
                 keepalive_due = time.monotonic() + timeout_ms / 2000.0
@@ -281,7 +363,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                     # The walk costs a round trip per four records, so this drops
                     # a frame on a large board; the tick below catches back up.
                     caps.refresh(device)
-                    plan = caps.staging_plan()
+                    staging = staging_for(profile, caps)
                     ranges = any(target[0] == 'range' for target, _ in profile.values())
                     report("board LED map changed, controls re-resolved"
                            + (" - check the profile's raw ranges" if ranges else ""))

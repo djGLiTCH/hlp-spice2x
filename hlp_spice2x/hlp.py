@@ -418,6 +418,26 @@ class Capabilities:
         self.led_map = led_map or {}
         self.lights = []
 
+    @property
+    def lights(self) -> list:
+        """The board's light records, in the order page 5 reported them."""
+        return self._lights
+
+    @lights.setter
+    def lights(self, records) -> None:
+        """Cache the records, and the per-control index derived from them.
+
+        Indexing here rather than at each lookup keeps the streaming loop off a
+        scan of the whole table: a board with a case strip has several dozen
+        records, and a frame may ask about several controls.
+        """
+        self._lights = list(records)
+        owners = {}
+        for record in self._lights:
+            if not record['synthesised']:
+                owners.setdefault(record['button_id'], []).append(record)
+        self.owners = owners
+
     @classmethod
     def absent(cls):
         """Capabilities for a run with no board, where nothing can be negotiated.
@@ -496,8 +516,35 @@ class Capabilities:
         :param button_id: the control to ask about
         :return: the board's records for that control, in ordinal order
         """
-        return [record for record in self.lights
-                if record['button_id'] == button_id and not record['synthesised']]
+        return self.owners.get(button_id, [])
+
+    def names_control(self, button_id: int) -> bool:
+        """Say whether the light table mentions a control at all, synthesised or not.
+
+        The difference between this and lights_owned_by being empty is the
+        difference between a board that has no such light and a board whose
+        table cannot describe the one it has.
+
+        :param button_id: the control to ask about
+        :return: True if any record names that control
+        """
+        return any(record['button_id'] == button_id for record in self.lights)
+
+    def stage_op(self, record) -> tuple:
+        """Say how to colour one light on this firmware.
+
+        An ordinal names the whole record in one entry and is immune to page 2's
+        best-effort LED bindings, so it is preferred wherever SET_LIGHT exists.
+        Before that the only address available is the raw LED index the record
+        carries, together with its own count, which may differ from the board's
+        global LEDs-per-button.
+
+        :param record: a page 5 light record
+        :return: ('light', ordinal) or ('range', first LED, LED count)
+        """
+        if self.per_light:
+            return ('light', record['ordinal'])
+        return ('range', record['first_led'], record['led_count'])
 
     def staging_plan(self) -> dict:
         """Decide, per control, how a bare control name reaches all of its lights.
@@ -513,7 +560,7 @@ class Capabilities:
         The redundant write is one entry of one report, and accepting it is the
         only rule that is correct on both render pipelines.
 
-        :return: mapping of button ID to (stages by name, records to stage explicitly)
+        :return: mapping of button ID to (stages by name, staging operations)
         """
         plan = {}
         for button_id in {record['button_id'] for record in self.lights}:
@@ -521,9 +568,9 @@ class Capabilities:
             if not records:
                 continue
             if not self.stages_by_name(button_id):
-                plan[button_id] = (False, records)
+                plan[button_id] = (False, [self.stage_op(record) for record in records])
             elif button_id in ONE_LAMP_CONTROLS and len(records) > 1:
-                plan[button_id] = (True, records)
+                plan[button_id] = (True, [self.stage_op(record) for record in records])
         return plan
 
     def refresh(self, device) -> None:
@@ -717,14 +764,50 @@ class HostLightingDevice:
                     return records, fingerprint
         raise HostLightingError("light table kept changing while it was being read")
 
+    def _light_reports(self, command: int, entries: list, capacity: int, width: int) -> list:
+        """Split per-light entries into the reports needed to carry them.
+
+        Entry width is checked before anything is built. The count byte tells
+        the firmware how many fixed-width entries follow, so an entry of the
+        wrong width is not rejected - it shifts every entry after it and stages
+        garbage, with nothing on the wire to say so.
+
+        :param command: the staging command, for the error message
+        :param entries: per-light tuples, one report entry each
+        :param capacity: entries per report for this command
+        :param width: bytes per entry for this command
+        :return: (chunk, payload) for each report to send
+        """
+        wrong = next((entry for entry in entries if len(entry) != width), None)
+        if wrong is not None:
+            raise ValueError(f"command 0x{command:02X} takes {width}-byte entries, got {len(wrong)}")
+        return [(entries[start:start + capacity],
+                 bytes([len(entries[start:start + capacity])])
+                 + b''.join(bytes(entry) for entry in entries[start:start + capacity]))
+                for start in range(0, len(entries), capacity)]
+
+    def send_lights(self, entries: list, rgbw: bool = False) -> None:
+        """Stage per-light colours by ordinal without waiting for the replies.
+
+        The streaming counterpart to set_lights. Staging is fire-and-forget for
+        throughput, the same as SET_BUTTONS and SET_RANGE, and only the COMMIT
+        that publishes a frame is worth waiting on; a round trip per report in a
+        frame loop would cost more than the diagnosis is worth at that rate. A
+        caller that needs to know which entries the board skipped wants
+        set_lights instead.
+
+        :param entries: (ordinal, red, green, blue) tuples, or with a white
+            component when rgbw is set
+        :param rgbw: send the RGBW form of the command (protocol v1.3)
+        """
+        command = CMD_SET_LIGHT_RGBW if rgbw else CMD_SET_LIGHT
+        capacity = SET_LIGHT_RGBW_MAX if rgbw else SET_LIGHT_MAX
+        for _, payload in self._light_reports(command, entries, capacity, 5 if rgbw else 4):
+            self.send(command, payload)
+
     def _stage_light_entries(self, command: int, entries: list, capacity: int, width: int,
                              outcomes: bool = False, timeout: float = 0.5) -> tuple:
-        """Stage per-light entries, chunked to what one report carries.
-
-        Entry width is checked before anything is sent. The count byte tells the
-        firmware how many fixed-width entries follow, so an entry of the wrong
-        width is not rejected - it shifts every entry after it and stages
-        garbage, with nothing on the wire to say so.
+        """Stage per-light entries and read back what the board made of them.
 
         :param command: CMD_SET_LIGHT or CMD_SET_LIGHT_RGBW
         :param entries: per-light tuples, one report entry each
@@ -737,14 +820,9 @@ class HostLightingDevice:
         :return: (applied, skipped, the ordinals the board skipped), the ordinals
             being None when the outcome mask was not read
         """
-        wrong = next((entry for entry in entries if len(entry) != width), None)
-        if wrong is not None:
-            raise ValueError(f"command 0x{command:02X} takes {width}-byte entries, got {len(wrong)}")
         applied = skipped = 0
         stale = [] if outcomes else None
-        for start in range(0, len(entries), capacity):
-            chunk = entries[start:start + capacity]
-            payload = bytes([len(chunk)]) + b''.join(bytes(entry) for entry in chunk)
+        for chunk, payload in self._light_reports(command, entries, capacity, width):
             reply = self.request_ok(command, payload, timeout)
             _require_length(reply, 7, f"command 0x{command:02X}")
             applied += reply[3]

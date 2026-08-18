@@ -96,11 +96,21 @@ itself within two seconds if the bridge is killed or the game exits.
   reports them, which needs HLP v1.1 or newer. Leave it empty to ignore that
   light. Where the board says a control owns several lights, such as a layout
   with two Up buttons, all of them are lit.
+- **`index`** picks out one light of a control, counting as the board's own
+  light table lists them, so `{ "button": "UP", "index": 1 }` is the second Up
+  button on a layout that has two. It needs HLP v1.2 or newer, and the bridge
+  refuses to start rather than lighting something else if the board is older or
+  cannot say which lights belong to that control.
 - **`range`** addresses raw LED indexes as `[start, count]`, for lights that do
   not correspond to a control. Unlike `button`, this is tied to the board it was
   written for.
 - **`colour`** is `RRGGBB` hex, scaled by how brightly the game is driving that
   light. `color` is accepted too. Defaults to white.
+
+The three forms differ in how portable they are. A `button` entry works on any
+board. An `index` entry names a portable control but picks a light by a position
+only that board's light table defines, so it may pick a different light
+elsewhere. A `range` entry is raw LED indexes and is portable nowhere.
 
 Cabinet lights are mostly single-colour, so the game only reports an intensity
 from 0.0 to 1.0 - the colour is your choice. Two lights mapped to the same

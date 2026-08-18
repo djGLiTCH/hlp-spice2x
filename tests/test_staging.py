@@ -11,7 +11,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 """
 import pytest
 
-from hlp_spice2x import bridge, hlp
+from hlp_spice2x import bridge, hlp, profile as profile_module
 
 from .fake_board import M_ULTRA_LIGHTS, FakeBoard, OneShotConnection
 
@@ -27,11 +27,18 @@ def connected(**kwargs):
     return device, caps, board
 
 
-def stage(frame, **kwargs):
-    """Stage one frame against a fake board and return the board and its plan."""
+def stage(frame, profile=None, **kwargs):
+    """Stage one frame against a fake board and return the board it was staged on."""
     device, caps, board = connected(**kwargs)
-    bridge.send_frame(device, frame, plan=caps.staging_plan())
+    bridge.send_frame(device, frame, staging=bridge.staging_for(profile or {}, caps))
     return board
+
+
+def lights(board):
+    """Collect the (ordinal, colour) of every SET_LIGHT entry the board was sent."""
+    return [(payload[1 + n * 4], tuple(payload[2 + n * 4:5 + n * 4]))
+            for payload in board.staged(hlp.CMD_SET_LIGHT)
+            for n in range(payload[0])]
 
 
 def ranges(board):
@@ -143,7 +150,18 @@ def test_a_target_kind_no_pass_recognises_is_refused():
     """
     device, _, _ = connected(version=(1, 3))
     with pytest.raises(ValueError, match='unknown target kind'):
-        bridge.send_frame(device, {('light', 3): RED})
+        bridge.send_frame(device, {('sparkle', 3): RED})
+
+
+def test_a_per_light_target_that_was_never_resolved_is_refused():
+    """Test that an unresolved per-light target raises rather than staging nothing.
+
+    Its ordinal is only knowable against a board, so one that reached staging
+    without having been resolved is a wiring mistake, and a silent one at that.
+    """
+    device, _, _ = connected(version=(1, 3))
+    with pytest.raises(ValueError, match='never resolved'):
+        bridge.send_frame(device, {('light', 0, 1): RED}, staging={})
 
 
 def test_target_discovery_reads_the_table_instead_of_writing_to_the_board():
@@ -258,3 +276,74 @@ def test_a_run_says_what_rate_it_settled_on():
                device=FakeBoard(version=(1, 3), render_hz=40).open(), report=lines.append)
     reported = '|'.join(lines)
     assert "streaming at 40 fps (matching the board's render rate)" in reported
+
+
+def test_the_expansion_switches_to_ordinals_once_the_board_offers_them():
+    """Test that v1.2 addresses each light by its ordinal instead of by raw index.
+
+    An ordinal names the whole record in one entry and is immune to page 2's
+    best-effort LED bindings, so it is the better address wherever it exists.
+    """
+    board = stage({('button', 0): RED}, version=(1, 2), lights=M_ULTRA_LIGHTS)
+    assert named(board) == [0]
+    assert [ordinal for ordinal, _ in lights(board)] == [3, 12]
+    assert ranges(board) == []
+
+
+def test_a_per_light_target_colours_that_light_alone():
+    """Test that an indexed entry stages one ordinal and does not name the control."""
+    profile = {'Second Up': (('light', 0, 1), RED)}
+    board = stage({('light', 0, 1): RED}, profile=profile, version=(1, 2),
+                  lights=M_ULTRA_LIGHTS)
+    assert named(board) == []
+    assert lights(board) == [(12, RED)]
+
+
+def test_an_index_counts_the_lights_the_table_gives_that_control():
+    """Test that index 0 and index 1 pick the first and second of Up's two lights."""
+    for index, ordinal in ((0, 3), (1, 12)):
+        profile = {'Up': (('light', 0, index), RED)}
+        board = stage({('light', 0, index): RED}, profile=profile, version=(1, 2),
+                      lights=M_ULTRA_LIGHTS)
+        assert lights(board) == [(ordinal, RED)]
+
+
+def test_an_explicit_light_beats_the_expansion_of_its_own_control():
+    """Test that naming one light wins over a control name that also covers it."""
+    profile = {'Up': (('button', 0), RED), 'Second Up': (('light', 0, 1), (0, 0, 255))}
+    board = stage({('button', 0): RED, ('light', 0, 1): (0, 0, 255)}, profile=profile,
+                  version=(1, 2), lights=M_ULTRA_LIGHTS)
+    assert lights(board) == [(3, RED), (12, RED), (12, (0, 0, 255))]
+
+
+def test_a_per_light_target_on_firmware_too_old_is_refused_by_version():
+    """Test that v1.1 refuses an indexed entry and names the firmware needed.
+
+    A silent difference in which light lights is worse than a refusal that says
+    what would fix it.
+    """
+    _, caps, _ = connected(version=(1, 1), lights=M_ULTRA_LIGHTS)
+    with pytest.raises(hlp.HostLightingIncompatible, match='v1.2 or newer') as caught:
+        bridge.staging_for({'Up': (('light', 0, 1), RED)}, caps)
+    assert 'v1.1' in str(caught.value)
+
+
+def test_a_per_light_target_past_the_end_of_a_control_is_refused():
+    """Test that an index the board cannot offer says how many lights it does have."""
+    _, caps, _ = connected(version=(1, 2), lights=M_ULTRA_LIGHTS)
+    with pytest.raises(profile_module.ProfileError, match='out of range') as caught:
+        bridge.staging_for({'Up': (('light', 0, 5), RED)}, caps)
+    assert '2 lights' in str(caught.value)
+
+
+def test_a_synthesised_table_is_named_as_the_reason_rather_than_the_firmware():
+    """Test that a board whose table cannot show duplicates says so.
+
+    Reporting this as an out-of-range index would send the user chasing a
+    firmware upgrade that changes nothing, on a board that visibly has two Up
+    buttons.
+    """
+    _, caps, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS, synthesised=True)
+    with pytest.raises(profile_module.ProfileError, match='synthesised') as caught:
+        bridge.staging_for({'Up': (('light', 0, 1), RED)}, caps)
+    assert 'board limitation' in str(caught.value)

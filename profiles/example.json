@@ -4,6 +4,7 @@
     "P1 Button 2": { "button": "B2", "colour": "00FF00" },
     "P1 Button 3": { "button": "B3", "colour": "0000FF" },
     "P1 Start":    { "button": "S2", "colour": "FFAA00" },
+    "P1 Extra Up": { "button": "UP", "index": 1, "colour": "00FFFF" },
     "Neon Left":   { "range": [16, 30], "colour": "FF00FF" }
   }
 }
