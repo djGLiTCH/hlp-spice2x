@@ -24,6 +24,45 @@ light names differ from game to game. Profiles name *controls* (`B1`, `S2`,
 firmware resolves the control to whatever LEDs that user actually wired. One
 profile therefore works across board layouts.
 
+## A worked example of the protocol
+
+This bridge doubles as a real-world example of implementing Host Lighting
+Protocol support in a host application, for anyone adding HLP to their own
+tooling for GP2040-CE based controllers. It is a working tool first, but it was
+built against the whole protocol rather than the parts one program happens to
+need, and it drives every shipped version - v1.0 through v1.3 - from one code
+path, deciding what a board can do by asking it.
+
+The parts worth reading, in the order a host has to do them:
+
+| Where | What it shows |
+|---|---|
+| `hlp_spice2x/hlp.py` | The wire format: report framing, sequence matching, every capability page decoded field by field, and the staging commands each version added |
+| `hlp.negotiate` | Reading the version and the capability pages once, at connect, and refusing an unknown major version rather than driving it on assumptions that may no longer hold |
+| `hlp.Capabilities` | Turning a version and a feature bitmask into questions a call site can ask, so a later protocol version is one new field here rather than a hunt for version comparisons |
+| `bridge.staging_for` | Choosing how each target reaches the board's lights, and what it falls back to when the newest command is not available |
+| `bridge.send_frame` | The staging passes, and why the order they are emitted in is load-bearing |
+| `tests/fake_board.py` | A board fake parameterised by protocol version, which gates its own replies the way firmware does, so every version can be tested without four boards |
+
+Four things the protocol rewards, learned building this:
+
+- **Negotiate once, at connect, and freeze the result.** Re-deriving what a board
+  can do inside a streaming loop spends round trips on an answer that cannot have
+  changed without the board saying so.
+- **Branch on capabilities, not on version numbers.** Two of the capabilities
+  here deliberately do not follow from the version: the light table needs a
+  feature bit as well, and a host-supplied white component needs the LED chain to
+  have somewhere to put it.
+- **Give every capability a fallback.** The same profile has to work on a v1.0
+  board, just with less finesse.
+- **Clamp a newer minor version rather than refusing it.** Within a major version
+  the protocol only ever adds, so a board newer than your client still keeps
+  every promise your client relies on. Refusing it strands the user on firmware
+  that is better at everything they asked for.
+
+The protocol itself is specified in
+[docs/host-lighting.md](https://github.com/djGLiTCH/GP2040-CE/blob/20260811-host-lighting-protocol/docs/host-lighting.md).
+
 ## Requirements
 
 - A GP2040-CE board running firmware with the **Host Lighting** add-on, enabled
