@@ -57,7 +57,7 @@ def parse_colour(name: str, colour) -> tuple:
     return ((value >> 24) & 0xFF, (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF)
 
 
-def load(path: str) -> dict:
+def load(path: str) -> tuple:
     """Load a profile and resolve its control names to protocol target IDs.
 
     :param path: path to the profile JSON
@@ -78,6 +78,11 @@ def load(path: str) -> dict:
         # index with nothing to index into is a mistake rather than a blank line
         if 'index' in entry and not entry.get('button'):
             raise ProfileError(f"light '{name}': 'index' needs a 'button' to index into")
+        # a range key with nothing usable in it is a mistake, not a blank line:
+        # [] and 0 and null are all falsy, so the skeleton skip below would
+        # swallow them while a merely malformed [16] is refused outright
+        if 'range' in entry and not entry.get('range'):
+            raise ProfileError(f"light '{name}': 'range' must be [start, count]")
         if 'button' not in entry and 'range' not in entry:
             # neither key at all is more likely a typo than a deliberate skip
             warnings.append(f"light '{name}' has no 'button' or 'range' key, ignoring")

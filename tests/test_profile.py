@@ -265,3 +265,20 @@ def test_two_lights_on_one_target_combine_across_different_widths():
 def test_a_white_component_is_shown_in_a_dry_run():
     """Test that dry-run output renders all four components rather than three."""
     assert profile_module.format_frame({('button', 4): (255, 0, 0, 128)}) == 'B1=#FF000080'
+
+
+@pytest.mark.parametrize('empty', [[], 0, None, ''])
+def test_a_range_key_with_nothing_in_it_is_reported(tmp_path, empty):
+    """Test that a falsy range is refused rather than silently dropped.
+
+    Every one of these is falsy, so the branch that skips an unfilled skeleton
+    line swallowed them, while a merely malformed [16] was refused. The light
+    then went missing from the profile with nothing said about it.
+    """
+    with pytest.raises(profile_module.ProfileError, match=r'\[start, count\]'):
+        profile_module.load(write(tmp_path, {'A': {'range': empty}}))
+
+
+def test_load_is_annotated_with_what_it_returns():
+    """Test that the annotation agrees with the docstring and the call site."""
+    assert profile_module.load.__annotations__['return'] is tuple
