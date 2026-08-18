@@ -101,15 +101,18 @@ def stage_group(device, operations, verify=False) -> list:
             stage = device.set_lights_rgbw if rgbw else device.set_lights
             try:
                 _, _, stale = stage(entries, outcomes=True)
-            except (hlp.HostLightingTimeout, hlp.HostLightingRejected):
+            except hlp.HostLightingDisconnected:
+                raise  # an absent board is not a bad reply
+            except hlp.HostLightingError:
                 # Asking for a receipt must not be riskier than not asking, and
                 # abandoning the batch here would make it exactly that: entries
                 # are sent one report at a time and each waits for its reply
                 # before the next is written, so a reply that never comes takes
                 # every report after it with it. Send the batch again without
                 # waiting, which is what would have happened had nobody asked.
-                # Restaging pixels already written is idempotent, so the one
-                # duplicated report costs nothing but itself.
+                # Restaging pixels already written is idempotent, so the reports
+                # that go out twice cost nothing but themselves - up to the whole
+                # batch, when it was the last receipt that went missing.
                 device.send_lights(entries, rgbw=rgbw)
                 continue
             skipped.extend(stale or ())

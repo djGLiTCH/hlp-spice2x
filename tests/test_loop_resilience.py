@@ -376,3 +376,18 @@ def test_a_lost_receipt_does_not_abandon_the_rest_of_the_batch():
               for n in range(payload[0])}
     assert len(staged) == 30, f"only {len(staged)} of 30 lights reached the board"
     assert result.acknowledged is True
+
+
+def test_a_truncated_receipt_is_treated_as_a_lost_one():
+    """Test that a short reply takes the resend path rather than ending the run.
+
+    A reply only has to be long enough to match the request, so one too short to
+    hold the outcome mask matches and then fails on the read. Withholding a reply
+    and mangling one have to end the same way.
+    """
+    board = FakeBoard(version=(1, 3), lights=M_ULTRA_LIGHTS)
+    answered = board._stage_lights
+    board._stage_lights = lambda command, payload: bytearray(answered(command, payload)[:5])
+
+    text = run_with(board)
+    assert 'frames in' in text
