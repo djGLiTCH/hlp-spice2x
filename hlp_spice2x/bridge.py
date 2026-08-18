@@ -526,7 +526,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
     fingerprint = None
     frames = misses = 0
     started = time.monotonic()
-    caps = hlp.Capabilities.absent()
+    caps = hlp.HostLightingCapabilities.absent()
     staging = {}
     deferred = []
     verify_next = False

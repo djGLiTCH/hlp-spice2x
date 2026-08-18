@@ -406,7 +406,7 @@ def decode_lights(reply: bytes) -> dict:
     }
 
 
-class Capabilities:
+class HostLightingCapabilities:
     """What the board on the other end can do, decided once at connect.
 
     Call sites ask this object what is available rather than comparing version
@@ -463,13 +463,13 @@ class Capabilities:
 
     @classmethod
     def absent(cls):
-        """Capabilities for a run with no board, where nothing can be negotiated.
+        """Describe a run with no board, where nothing can be negotiated.
 
         Every capability answers no, so a dry run takes the same code paths as
         the oldest board rather than needing a check for the absence of a board
         at each one.
 
-        :return: a Capabilities describing no board at all
+        :return: a HostLightingCapabilities describing no board at all
         """
         return cls()
 
@@ -960,7 +960,7 @@ def read_protocol_version(device: HostLightingDevice) -> tuple:
     return reply[7], reply[8]
 
 
-def read_light_table(device: HostLightingDevice, caps: Capabilities) -> list:
+def read_light_table(device: HostLightingDevice, caps: HostLightingCapabilities) -> list:
     """Read the board's light table, where it has one to report.
 
     Gated on the page 1 feature bit as well as the version, because a cleared
@@ -982,7 +982,7 @@ def read_light_table(device: HostLightingDevice, caps: Capabilities) -> list:
     return records
 
 
-def negotiate(device: HostLightingDevice, force: bool = False) -> Capabilities:
+def negotiate(device: HostLightingDevice, force: bool = False) -> HostLightingCapabilities:
     """Agree what the board can do, once, before any streaming starts.
 
     A minor version above the highest supported is clamped down rather than
@@ -993,7 +993,7 @@ def negotiate(device: HostLightingDevice, force: bool = False) -> Capabilities:
 
     :param device: an opened HostLightingDevice
     :param force: run against an unsupported major version anyway
-    :return: the negotiated Capabilities
+    :return: the negotiated HostLightingCapabilities
     :raises HostLightingIncompatible: on an unsupported major version, unless forced
     :raises HostLightingError: if the board does not answer as a Host Lighting one
     """
@@ -1005,9 +1005,9 @@ def negotiate(device: HostLightingDevice, force: bool = False) -> Capabilities:
             f"v{SUPPORTED_MAJOR}.0 to v{SUPPORTED_MAJOR}.{MAX_SUPPORTED_MINOR}. A different "
             f"major version may have changed commands this bridge relies on, so it is not "
             f"driven blind. Pass --force to run anyway.")
-    caps = Capabilities(major=major, minor=min(minor, MAX_SUPPORTED_MINOR),
-                        reported=(major, minor), state=read_state(device),
-                        led_map=read_led_map(device), forced=unsupported)
+    caps = HostLightingCapabilities(major=major, minor=min(minor, MAX_SUPPORTED_MINOR),
+                                    reported=(major, minor), state=read_state(device),
+                                    led_map=read_led_map(device), forced=unsupported)
     caps.lights = read_light_table(device, caps)
     return caps
 

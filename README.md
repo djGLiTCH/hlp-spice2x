@@ -39,7 +39,7 @@ The parts worth reading, in the order a host has to do them:
 |---|---|
 | `hlp_spice2x/hlp.py` | The wire format: report framing, sequence matching, every capability page decoded field by field, and the staging commands each version added |
 | `hlp.negotiate` | Reading the version and the capability pages once, at connect, and refusing an unknown major version rather than driving it on assumptions that may no longer hold |
-| `hlp.Capabilities` | Turning a version and a feature bitmask into questions a call site can ask, so a later protocol version is one new field here rather than a hunt for version comparisons |
+| `hlp.HostLightingCapabilities` | Turning a version and a feature bitmask into questions a call site can ask, so a later protocol version is one new field here rather than a hunt for version comparisons |
 | `bridge.staging_for` | Choosing how each target reaches the board's lights, and what it falls back to when the newest command is not available |
 | `bridge.send_frame` | The staging passes, and why the order they are emitted in is load-bearing |
 | `tests/fake_board.py` | A board fake parameterised by protocol version, which gates its own replies the way firmware does, so every version can be tested without four boards |

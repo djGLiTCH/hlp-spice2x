@@ -174,12 +174,12 @@ def test_a_board_that_states_no_render_rate_reads_as_unstated():
 def test_the_board_reported_extent_is_preferred_to_the_buffer_ceiling():
     """Test that the board's own LED extent is used where it gives one."""
     assert negotiated(version=(1, 3), led_extent=128).led_extent == 128
-    assert hlp.Capabilities.absent().led_extent == hlp.MAX_LEDS
+    assert hlp.HostLightingCapabilities.absent().led_extent == hlp.MAX_LEDS
 
 
 def test_capabilities_without_a_board_answer_no_to_everything():
     """Test that a dry run has a defined absent form rather than needing None checks."""
-    caps = hlp.Capabilities.absent()
+    caps = hlp.HostLightingCapabilities.absent()
     assert caps.connected is False
     assert caps.light_table is False
     assert caps.per_light is False

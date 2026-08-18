@@ -247,7 +247,7 @@ def test_an_explicit_rate_overrides_the_board():
 
 def test_a_dry_run_has_a_rate_without_having_a_board():
     """Test that the absent capabilities resolve a rate rather than needing a special case."""
-    rate, reason = bridge.resolve_stream_rate(None, hlp.Capabilities.absent())
+    rate, reason = bridge.resolve_stream_rate(None, hlp.HostLightingCapabilities.absent())
     assert rate == bridge.DEFAULT_FPS
     assert 'no board' in reason
 
@@ -514,7 +514,7 @@ def test_a_range_inside_the_board_is_not_reported():
 def test_a_board_that_reports_no_extent_falls_back_to_the_buffer_ceiling():
     """Test that a pre-v1.1 board or a dry run does not report every range as past the end."""
     assert bridge.ranges_past_the_board({'Neon': (('range', 16, 30), RED)},
-                                        hlp.Capabilities.absent()) == []
+                                        hlp.HostLightingCapabilities.absent()) == []
 
 
 def test_a_board_with_no_light_table_yet_holds_per_light_entries_back():
