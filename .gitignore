@@ -10,3 +10,6 @@ htmlcov/
 .tox/
 .venv/
 venv/
+
+# generated per board by tests/hardware_bridge.py
+tests/hardware_bridge_profile.json
