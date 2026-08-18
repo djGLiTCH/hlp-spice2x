@@ -83,7 +83,9 @@ def stage_group(device, operations, verify=False) -> list:
     :param device: an opened HostLightingDevice
     :param operations: (operation, rgb) pairs, as a staging map produces them
     :param verify: wait for each per-light report and read back what was skipped
-    :return: the ordinals the board reported skipping, empty unless verifying
+    :return: the ordinals the board reported skipping, empty unless verifying,
+        and empty too if the board did not answer - a lost receipt is not
+        evidence that anything was skipped
     """
     skipped = []
     batches = (
@@ -97,7 +99,16 @@ def stage_group(device, operations, verify=False) -> list:
             continue
         if verify:
             stage = device.set_lights_rgbw if rgbw else device.set_lights
-            _, _, stale = stage(entries, outcomes=True)
+            try:
+                _, _, stale = stage(entries, outcomes=True)
+            except (hlp.HostLightingTimeout, hlp.HostLightingRejected):
+                # Asking for a receipt must not be riskier than not asking. The
+                # entries were written before the reply was waited for, so they
+                # are staged either way; all that is lost is knowing what the
+                # board made of them. Every other round trip in the loop already
+                # shrugs a bad reply off, and this one is asked for at exactly
+                # the moment the board is busiest reconfiguring itself.
+                continue
             skipped.extend(stale or ())
         else:
             device.send_lights(entries, rgbw=rgbw)

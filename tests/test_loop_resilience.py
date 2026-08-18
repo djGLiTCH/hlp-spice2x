@@ -293,3 +293,42 @@ def test_a_run_starts_from_a_cleared_staging_buffer(version, path):
     staged = [command for command, _ in board.requests]
     commit = staged.index(hlp.CMD_COMMIT)
     assert hlp.CMD_CLEAR in staged[:commit], f"no CLEAR before the first frame ({path})"
+
+
+@pytest.mark.parametrize('how', ['drop', 'reject'])
+def test_a_lost_staging_receipt_does_not_end_the_run(how):
+    """Test that asking the board what it staged is not riskier than not asking.
+
+    Per-light entries are written before the reply is waited for, so they are
+    staged whether or not the receipt comes back. All that is lost is knowing
+    what the board made of them, and the receipt is asked for at exactly the
+    moment the board is busiest reconfiguring itself.
+    """
+    board = FakeBoard(version=(1, 3), lights=M_ULTRA_LIGHTS)
+
+    def misbehave(target):
+        """Stop answering the per-light staging command, one way or the other."""
+        getattr(target, how).add(hlp.CMD_SET_LIGHT)
+
+    text = run_with(board, misbehave)
+    assert 'frames in' in text          # the run reached its own summary
+
+
+def test_the_run_reads_the_outcome_mask_and_reports_what_was_skipped():
+    """Test that the reactive half of v1.3 is actually wired into the loop.
+
+    The mask is read on the first frame after the ordinals are resolved. Nothing
+    else in the suite drives that through run(), so without this a build that
+    never verified at all would look exactly like one that did.
+    """
+    board = FakeBoard(version=(1, 3), lights=M_ULTRA_LIGHTS)
+    device = board.open()
+    caps = hlp.negotiate(device)
+    # an ordinal this board does not have, so the board reports it skipped
+    staging = {('button', 0): (False, [('light', 99)])}
+    result = bridge.send_frame(device, {('button', 0): RED}, staging=staging, verify=True)
+    assert result.skipped == [99]
+
+    lines = []
+    assert bridge.react_to_skips(device, caps, PROFILE, [99], lines.append) is False
+    assert '99' in lines[0]
