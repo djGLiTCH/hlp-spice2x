@@ -49,6 +49,24 @@ The index counts that control's lights in the order the board's own light table
 lists them, starting at 0. Running the bridge prints which controls have more
 than one light, which is the quickest way to find out whether yours do.
 
+## Boards with a white channel
+
+On a GRBW or RGBW chain, an eight-digit colour asks for the white emitter:
+
+```json
+"Marquee": { "button": "S2", "colour": "FFFFFF00" }
+```
+
+The achromatic part of the colour is moved onto the white emitter, so white is
+sent as white rather than as equal parts of the three colour emitters. Any white
+you give explicitly is added on top of that, so `FF0000FF` is red plus full
+white and `FF000080` is red plus half.
+
+This needs HLP v1.3 as well as a chain with a white emitter. On anything older
+the firmware maps achromatic colours onto the white emitter itself and ignores
+what the host sent, so the bridge drops the white and sends plain RGB, which is
+what renders correctly there. It says so once at startup rather than per frame.
+
 ## Contributing
 
 Pull requests adding a profile are welcome. Please name the file after the

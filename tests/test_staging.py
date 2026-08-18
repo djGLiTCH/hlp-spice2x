@@ -347,3 +347,146 @@ def test_a_synthesised_table_is_named_as_the_reason_rather_than_the_firmware():
     with pytest.raises(profile_module.ProfileError, match='synthesised') as caught:
         bridge.staging_for({'Up': (('light', 0, 1), RED)}, caps)
     assert 'board limitation' in str(caught.value)
+
+
+def white_lights(board):
+    """Collect the (ordinal, colour) of every SET_LIGHT_RGBW entry sent."""
+    return [(payload[1 + n * 5], tuple(payload[2 + n * 5:6 + n * 5]))
+            for payload in board.staged(hlp.CMD_SET_LIGHT_RGBW)
+            for n in range(payload[0])]
+
+
+def test_the_outcome_mask_names_the_ordinal_the_board_skipped():
+    """Test that a stale ordinal is reported rather than silently doing nothing."""
+    device, _, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS)
+    result = bridge.send_frame(device, {('button', 0): RED},
+                               staging={('button', 0): (False, [('light', 99)])}, verify=True)
+    assert result.skipped == [99]
+    assert result.acknowledged is True
+
+
+def test_a_frame_result_still_reads_as_a_plain_yes_or_no():
+    """Test that widening the return kept the only thing callers used it for."""
+    device, _, _ = connected(version=(1, 3))
+    assert bridge.send_frame(device, {('button', 0): RED})
+
+
+def test_the_mask_is_not_read_on_the_firmware_that_zero_fills_it():
+    """Test that v1.2 is never asked, because its answer would be a lie.
+
+    A v1.2 board zero-fills the outcome bytes, so reading them says every entry
+    was skipped, including the ones that lit. The gate is the whole reason the
+    capability exists separately from per-light staging.
+    """
+    _, caps, _ = connected(version=(1, 2), lights=M_ULTRA_LIGHTS)
+    assert caps.per_light is True
+    assert caps.outcome_mask is False
+
+    device, _, _ = connected(version=(1, 2), lights=M_ULTRA_LIGHTS)
+    result = bridge.send_frame(device, {('button', 0): RED},
+                               staging={('button', 0): (False, [('light', 3)])})
+    assert result.skipped == []
+
+
+def test_reading_the_mask_on_a_v1_2_board_would_report_everything_skipped():
+    """Test the trap itself, so the gate above cannot be removed without a failure."""
+    device, _, _ = connected(version=(1, 2), lights=M_ULTRA_LIGHTS)
+    applied, skipped, stale = device.set_lights([(3, 255, 0, 0)], outcomes=True)
+    assert (applied, skipped) == (1, 0)
+    assert stale == [3]
+
+
+def test_a_skip_after_the_map_moved_re_reads_the_light_table():
+    """Test that a stale ordinal is treated as staleness when the map really moved."""
+    device, caps, board = connected(version=(1, 3), lights=[(0, 0), (0, 1)])
+    board.lights = [(0, 0, 1)]
+    board.fingerprint = 77
+    lines = []
+    assert bridge.react_to_skips(device, caps, {}, [1], lines.append) is True
+    assert 're-read' in lines[0]
+    assert caps.fingerprint == 77
+
+
+def test_a_skip_with_no_map_change_says_the_profile_is_asking_for_too_much():
+    """Test that an unchanged fingerprint stops the re-reading and blames the right thing.
+
+    Re-reading a table that has not moved would return the same ordinals and
+    the same skip, every frame, forever.
+    """
+    device, caps, _ = connected(version=(1, 3), lights=[(0, 0)])
+    lines = []
+    assert bridge.react_to_skips(device, caps, {}, [9], lines.append) is False
+    assert 'does not have' in lines[0]
+
+
+def test_a_colour_with_no_white_is_staged_exactly_as_before():
+    """Test that adding white support changed nothing for profiles without it."""
+    board = stage({('button', 4): RED}, version=(1, 3), colour_format=2,
+                  lights=M_ULTRA_LIGHTS)
+    assert named(board) == [4]
+    assert white_lights(board) == []
+
+
+def test_white_reaches_a_white_chain_on_firmware_that_honours_it():
+    """Test that v1.3 plus a white chain routes the colour through SET_LIGHT_RGBW.
+
+    SET_BUTTONS has no RGBW form, so a control asking for white has to be
+    reached one light at a time instead of by name.
+    """
+    profile = {'Up': (('button', 0), (255, 255, 255, 0))}
+    board = stage({('button', 0): (255, 255, 255, 0)}, profile=profile, version=(1, 3),
+                  colour_format=2, lights=M_ULTRA_LIGHTS)
+    assert named(board) == []
+    assert white_lights(board) == [(3, (0, 0, 0, 255)), (12, (0, 0, 0, 255))]
+
+
+def test_white_is_dropped_where_the_chain_has_no_emitter_for_it():
+    """Test that a GRB board gets plain RGB, since it has nothing to send white to."""
+    profile = {'Up': (('button', 0), (255, 255, 255, 255))}
+    board = stage({('button', 0): (255, 255, 255, 255)}, profile=profile, version=(1, 3),
+                  colour_format=0, lights=M_ULTRA_LIGHTS)
+    assert named(board) == [0]
+    assert white_lights(board) == []
+    _, caps, _ = connected(version=(1, 3), colour_format=0, lights=M_ULTRA_LIGHTS)
+    assert 'no white emitter' in bridge.white_warnings(profile, caps)[0]
+
+
+def test_white_is_dropped_on_firmware_that_ignores_a_host_supplied_one():
+    """Test that a white chain on v1.2 still gets RGB, which is what renders right there.
+
+    Older firmware maps achromatic colours onto the white emitter itself, so
+    sending the textbook subtractive white would render dark.
+    """
+    profile = {'Up': (('button', 0), (255, 255, 255, 255))}
+    board = stage({('button', 0): (255, 255, 255, 255)}, profile=profile, version=(1, 2),
+                  colour_format=2, lights=M_ULTRA_LIGHTS)
+    assert named(board) == [0]
+    assert white_lights(board) == []
+    _, caps, _ = connected(version=(1, 2), colour_format=2, lights=M_ULTRA_LIGHTS)
+    assert 'v1.3 honours it' in bridge.white_warnings(profile, caps)[0]
+
+
+def test_a_per_light_target_carries_white_to_its_own_ordinal():
+    """Test that an indexed entry asking for white stages one RGBW light."""
+    profile = {'Second Up': (('light', 0, 1), (255, 0, 0, 128))}
+    board = stage({('light', 0, 1): (255, 0, 0, 128)}, profile=profile, version=(1, 3),
+                  colour_format=3, lights=M_ULTRA_LIGHTS)
+    assert white_lights(board) == [(12, (255, 0, 0, 128))]
+
+
+def test_a_raw_range_carries_white_through_the_rgbw_range_command():
+    """Test that a range entry asking for white uses SET_RANGE_RGBW."""
+    profile = {'Neon': (('range', 16, 2), (255, 255, 255, 0))}
+    board = stage({('range', 16, 2): (255, 255, 255, 0)}, profile=profile, version=(1, 3),
+                  colour_format=2, lights=M_ULTRA_LIGHTS)
+    payloads = board.staged(hlp.CMD_SET_RANGE_RGBW)
+    assert len(payloads) == 1
+    assert payloads[0][:2] == bytes([16, 2])
+    assert payloads[0][2:6] == bytes((0, 0, 0, 255))
+
+
+def test_white_on_a_control_with_no_light_table_entry_is_reported():
+    """Test that a control the table cannot break down is named, not silently dropped."""
+    profile = {'B2': (('button', 5), (255, 255, 255, 0))}
+    _, caps, _ = connected(version=(1, 3), colour_format=2, lights=[(0, 0)])
+    assert 'B2' in bridge.white_warnings(profile, caps)[0]

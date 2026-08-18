@@ -105,7 +105,10 @@ itself within two seconds if the bridge is killed or the game exits.
   not correspond to a control. Unlike `button`, this is tied to the board it was
   written for.
 - **`colour`** is `RRGGBB` hex, scaled by how brightly the game is driving that
-  light. `color` is accepted too. Defaults to white.
+  light. `color` is accepted too. Defaults to white. Eight digits as `RRGGBBWW`
+  asks for the board's white channel, which needs a GRBW or RGBW chain and HLP
+  v1.3; anywhere else the white is dropped, the colour is sent as RGB, and the
+  reason is printed once at startup.
 
 The three forms differ in how portable they are. A `button` entry works on any
 board. An `index` entry names a portable control but picks a light by a position

@@ -89,7 +89,7 @@ def test_send_frame_tolerates_a_late_commit():
     Replies are best-effort while streaming, so a late one must not end the run.
     """
     device = make_device()
-    assert bridge.send_frame(device, {('button', 4): (255, 0, 0)}) is False
+    assert not bridge.send_frame(device, {('button', 4): (255, 0, 0)})
     assert device.device.writes >= 2  # the staging report, then the commit
 
 

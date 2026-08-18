@@ -21,6 +21,20 @@ DEFAULT_FPS = 60.0
 MAX_STREAM_FPS = 60.0
 
 
+def stage_range_rgbw(device, start, count, rgbw) -> None:
+    """Stage one RGBW colour across a run of LEDs, in as many reports as it needs.
+
+    :param device: an opened HostLightingDevice
+    :param start: first LED index
+    :param count: how many LEDs to colour
+    :param rgbw: the colour to repeat across them
+    """
+    for offset in range(0, count, hlp.SET_RANGE_RGBW_MAX):
+        chunk = min(hlp.SET_RANGE_RGBW_MAX, count - offset)
+        device.send(hlp.CMD_SET_RANGE_RGBW,
+                    bytes([start + offset, chunk]) + bytes(rgbw) * chunk)
+
+
 def stage_range(device, start, count, rgb) -> None:
     """Stage one colour across a run of LEDs, split into as many reports as it needs.
 
@@ -34,21 +48,68 @@ def stage_range(device, start, count, rgb) -> None:
         device.send(hlp.CMD_SET_RANGE, bytes([start + offset, chunk]) + bytes(rgb) * chunk)
 
 
-def stage_group(device, operations) -> None:
+class FrameResult:
+    """What became of one published frame.
+
+    Truthy when the COMMIT was acknowledged, so a caller that only cares whether
+    the frame landed can still read it as a plain yes or no.
+    """
+
+    def __init__(self, acknowledged: bool, skipped=None):
+        """Record how the board answered.
+
+        :param acknowledged: whether the COMMIT came back in time
+        :param skipped: ordinals the board reported it did not colour, where it
+            was asked and is new enough to say
+        """
+        self.acknowledged = acknowledged
+        self.skipped = list(skipped or ())
+
+    def __bool__(self) -> bool:
+        """Report whether the COMMIT was acknowledged."""
+        return self.acknowledged
+
+
+def stage_group(device, operations, verify=False) -> list:
     """Emit one group of staging operations, batching the per-light entries.
+
+    Per-light staging is normally fire-and-forget like everything else in a
+    frame, because a round trip per report costs more than the diagnosis is
+    worth at streaming rates. When the caller asks to verify, the round-trip
+    form is used instead and the board is asked which entries it actually
+    coloured; only firmware from v1.3 can answer that, so the caller is the one
+    that has to know whether asking is worth anything.
 
     :param device: an opened HostLightingDevice
     :param operations: (operation, rgb) pairs, as a staging map produces them
+    :param verify: wait for each per-light report and read back what was skipped
+    :return: the ordinals the board reported skipping, empty unless verifying
     """
-    entries = [(operation[1], *rgb) for operation, rgb in operations if operation[0] == 'light']
-    if entries:
-        device.send_lights(entries)
-    for operation, rgb in operations:
+    skipped = []
+    batches = (
+        (False, [(operation[1], *colour[:3])
+                 for operation, colour in operations if operation[0] == 'light']),
+        (True, [(operation[1], *hlp.subtractive_white(colour))
+                for operation, colour in operations if operation[0] == 'light_rgbw']),
+    )
+    for rgbw, entries in batches:
+        if not entries:
+            continue
+        if verify:
+            stage = device.set_lights_rgbw if rgbw else device.set_lights
+            _, _, stale = stage(entries, outcomes=True)
+            skipped.extend(stale or ())
+        else:
+            device.send_lights(entries, rgbw=rgbw)
+    for operation, colour in operations:
         if operation[0] == 'range':
-            stage_range(device, operation[1], operation[2], rgb)
+            stage_range(device, operation[1], operation[2], colour[:3])
+        elif operation[0] == 'range_rgbw':
+            stage_range_rgbw(device, operation[1], operation[2], hlp.subtractive_white(colour))
+    return skipped
 
 
-def send_frame(device, frame, clear_first=False, staging=None) -> bool:
+def send_frame(device, frame, clear_first=False, staging=None, verify=False) -> FrameResult:
     """Stage a resolved frame and publish it.
 
     The board's staging buffer persists between commits, so a control that
@@ -75,45 +136,56 @@ def send_frame(device, frame, clear_first=False, staging=None) -> bool:
     :param clear_first: whether to clear staging before staging this frame
     :param staging: how each target reaches the board's lights, from
         staging_for, or None to stage every control by name and expand nothing
-    :return: False if the COMMIT went unacknowledged (the frame still applied)
+    :param verify: ask the board which per-light entries it actually coloured,
+        which only firmware from v1.3 can answer
+    :return: what became of the frame; falsy if the COMMIT went unacknowledged,
+        which does not stop the frame applying
     """
     if clear_first:
         device.send(hlp.CMD_CLEAR)
 
     buttons, implied, asked = [], [], []
-    for target, rgb in frame.items():
-        if target[0] == 'range':
-            asked.append((('range', target[1], target[2]), rgb))
-            continue
-        if target[0] not in ('button', 'light'):
+    for target, colour in frame.items():
+        if target[0] == 'button':
+            default = (True, ())
+        elif target[0] == 'range':
+            default = (False, [('range', target[1], target[2])])
+        elif target[0] == 'light':
+            # its ordinal is only knowable against a board, so one that reached
+            # here unresolved is a wiring mistake, and a silent one otherwise
+            if target not in (staging or {}):
+                raise ValueError(f"per-light target {target} was never resolved against a board")
+            default = None
+        else:
             # staging is fire-and-forget, so a target kind no pass below
             # recognises would light nothing and report nothing either
             raise ValueError(f"frame carries an unknown target kind: {target[0]!r}")
-        if target[0] == 'light' and target not in (staging or {}):
-            raise ValueError(f"per-light target {target} was never resolved against a board")
-        by_name, operations = (staging or {}).get(target, (True, ()))
+        by_name, operations = (staging or {}).get(target, default)
         if by_name:
-            buttons.append((target[1], rgb))
+            buttons.append((target[1], colour))
         group = implied if target[0] == 'button' else asked
-        group.extend((operation, rgb) for operation in operations)
+        group.extend((operation, colour) for operation in operations)
 
     for offset in range(0, len(buttons), hlp.SET_BUTTONS_MAX):
         batch = buttons[offset:offset + hlp.SET_BUTTONS_MAX]
-        payload = bytes([len(batch)]) + b''.join(bytes([bid, *rgb]) for bid, rgb in batch)
+        # SET_BUTTONS is RGB-only: the protocol has no RGBW form of it, so a
+        # white component never reaches the board down this path
+        payload = bytes([len(batch)]) + b''.join(bytes([bid, *colour[:3]])
+                                                 for bid, colour in batch)
         # the count byte says how many fixed-width entries follow, so a colour of
         # the wrong width would shift the rest and stage garbage silently
         if len(payload) != 1 + 4 * len(batch):
             raise ValueError("SET_BUTTONS carries three-byte colours only")
         device.send(hlp.CMD_SET_BUTTONS, payload)
 
-    stage_group(device, implied)
-    stage_group(device, asked)
+    skipped = stage_group(device, implied, verify) + stage_group(device, asked, verify)
 
     try:
         device.request_ok(hlp.CMD_COMMIT, timeout=0.25)
-        return True
+        return FrameResult(True, skipped)
     except hlp.HostLightingTimeout:
-        return False  # best-effort: the frame still applied, the reply was late
+        # best-effort: the frame still applied, the reply was late
+        return FrameResult(False, skipped)
 
 
 def validate_targets(device, profile, caps) -> tuple:
@@ -215,10 +287,93 @@ def staging_for(profile, caps) -> dict:
     """
     staging = {('button', button_id): entry
                for button_id, entry in caps.staging_plan().items()}
-    for target, _ in profile.values():
+    for target, colour in profile.values():
+        # a white component only survives where the chain has an emitter for it
+        # and the firmware honours what the host sent rather than deriving its own
+        white = len(colour) > 3 and caps.host_white
         if target[0] == 'light':
-            staging[target] = (False, [light_operation(caps, target[1], target[2])])
+            operation = light_operation(caps, target[1], target[2])
+            staging[target] = (False, [('light_rgbw', operation[1]) if white else operation])
+        elif target[0] == 'range' and white:
+            staging[target] = (False, [('range_rgbw', target[1], target[2])])
+        elif target[0] == 'button' and white:
+            # SET_BUTTONS cannot carry white, so a control asking for it has to
+            # be reached one light at a time instead of by name
+            records = caps.lights_owned_by(target[1])
+            if records:
+                staging[target] = (False, [('light_rgbw', record['ordinal'])
+                                           for record in records])
     return staging
+
+
+def white_warnings(profile, caps) -> list:
+    """Say, once at startup, where a profile's white component cannot be used.
+
+    Per frame this would be noise, and silence would leave the user staring at a
+    colour that is not the one they asked for with nothing to explain it. The
+    reason matters as much as the fact: a chain with no white emitter and a
+    firmware that ignores a host-supplied one look identical from the outside
+    and are fixed in completely different ways.
+
+    :param profile: a loaded profile
+    :param caps: the negotiated capabilities
+    :return: warnings to report, empty when the profile asks for no white
+    """
+    carrying = [target for target, colour in profile.values() if len(colour) > 3]
+    if not carrying:
+        return []
+    asking = ('1 profile entry asks' if len(carrying) == 1
+              else f"{len(carrying)} profile entries ask")
+    if not caps.white_channel:
+        chain = hlp.LED_FORMAT_NAMES.get(caps.led_map.get('colour_format'), 'unknown')
+        return [f"{asking} for a white component, but this "
+                f"board's LED chain is {chain} and has no white emitter to drive it, so the "
+                f"white is dropped and the colour is sent as RGB"]
+    if not caps.host_white:
+        return [f"{asking} for a white component, but Host "
+                f"Lighting v{caps.reported[0]}.{caps.reported[1]} maps achromatic colours onto "
+                f"the white emitter in firmware and ignores a host-supplied white, so the white "
+                f"is dropped and the colour is sent as RGB, which is what renders correctly "
+                f"there. v1.3 honours it"]
+    stranded = sorted({hlp.control_name(target[1]) for target in carrying
+                       if target[0] == 'button' and not caps.lights_owned_by(target[1])})
+    if stranded:
+        return [f"white was asked for on {', '.join(stranded)}, but this board's light table "
+                f"does not say which lights belong to {'them' if len(stranded) > 1 else 'it'}, "
+                f"and white can only be sent to a light named individually, so the white is "
+                f"dropped there and the colour is sent as RGB"]
+    return []
+
+
+def react_to_skips(device, caps, profile, skipped, report) -> bool:
+    """Work out why the board skipped a light, and re-read the table if it moved.
+
+    Being told is the whole point of the outcome mask. Before it existed a stale
+    ordinal was undiagnosable: it is still a perfectly valid ordinal, so the
+    board applies it, answers OK, and colours the wrong light.
+
+    The fingerprint separates the two cases. If it moved, the table moved
+    underneath the cached ordinals and re-reading fixes them. If it did not, the
+    ordinals are current and the profile is simply asking for lights this board
+    does not have, which no amount of re-reading will change.
+
+    :param device: an opened HostLightingDevice
+    :param caps: the negotiated capabilities, refreshed in place if the map moved
+    :param profile: a loaded profile
+    :param skipped: the ordinals the board reported skipping
+    :param report: callable used for progress output
+    :return: whether the next frame is worth verifying again
+    """
+    named = ', '.join(str(ordinal) for ordinal in skipped)
+    before = caps.fingerprint
+    caps.refresh(device)
+    if caps.fingerprint != before:
+        report(f"board skipped light(s) {named}; its LED map had changed underneath, so the "
+               f"light table was re-read")
+        return caps.outcome_mask
+    report(f"warning: board skipped light(s) {named} and its LED map has not changed, so the "
+           f"profile is asking for lights this board does not have")
+    return False
 
 
 def resolve_stream_rate(fps, caps) -> tuple:
@@ -275,6 +430,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
     started = time.monotonic()
     caps = hlp.Capabilities.absent()
     staging = {}
+    verify_next = False
 
     try:
         if device is not None:
@@ -303,6 +459,11 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                 report(f"warning: {len(unreachable)} mapped control(s) need Host Lighting "
                        f"v1.2 or newer to reach: {', '.join(unreachable)}")
             staging = staging_for(profile, caps)
+            # the ordinals are freshly resolved, so the next frame is the one
+            # worth asking about; after that nothing has moved to invalidate them
+            verify_next = caps.outcome_mask
+            for warning in white_warnings(profile, caps):
+                report(f"warning: {warning}")
             several = sorted(hlp.control_name(target[1])
                              for target, (_, operations) in staging.items()
                              if target[0] == 'button' and len(operations) > 1)
@@ -337,8 +498,16 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                 if device is None:
                     report(f"frame:{' [clear]' if departed else ''} "
                            f"{profile_module.format_frame(frame)}")
-                elif not send_frame(device, frame, clear_first=departed, staging=staging):
-                    misses += 1
+                else:
+                    result = send_frame(device, frame, clear_first=departed, staging=staging,
+                                        verify=verify_next)
+                    verify_next = False
+                    if not result:
+                        misses += 1
+                    if result.skipped:
+                        verify_next = react_to_skips(device, caps, profile, result.skipped,
+                                                     report)
+                        staging = staging_for(profile, caps)
                 last_frame = frame
                 keepalive_due = time.monotonic() + timeout_ms / 2000.0
                 frames += 1
@@ -364,6 +533,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                     # a frame on a large board; the tick below catches back up.
                     caps.refresh(device)
                     staging = staging_for(profile, caps)
+                    verify_next = caps.outcome_mask
                     ranges = any(target[0] == 'range' for target, _ in profile.values())
                     report("board LED map changed, controls re-resolved"
                            + (" - check the profile's raw ranges" if ranges else ""))

@@ -323,6 +323,29 @@ def decode_led_map(reply: bytes) -> dict:
     }
 
 
+def subtractive_white(colour) -> tuple:
+    """Convert a profile colour into the RGBW a board expects to be sent.
+
+    The achromatic part of a colour is exactly what a white emitter exists to
+    carry, so it is moved there: W takes min(R, G, B) and the three colour
+    channels are reduced by it. Sending white as equal parts red, green and blue
+    on a chain that has a white emitter lights three LEDs to make a worse white
+    than the one sitting next to them.
+
+    A white component the profile gave explicitly is added on top and clamped,
+    so a colour asking for red plus white gets both rather than whichever of the
+    two the conversion happened to favour.
+
+    :param colour: (r, g, b), or (r, g, b, w) as the profile gave it
+    :return: (r, g, b, w) to put on the wire
+    """
+    red, green, blue = colour[:3]
+    achromatic = min(red, green, blue)
+    asked = colour[3] if len(colour) > 3 else 0
+    return (red - achromatic, green - achromatic, blue - achromatic,
+            min(255, achromatic + asked))
+
+
 def has_white_channel(colour_format: int) -> bool:
     """Say whether a page 2 colour format has a white emitter to drive.
 

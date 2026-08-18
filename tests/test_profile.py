@@ -228,3 +228,40 @@ def test_a_per_light_target_renders_symbolically_without_a_board():
     what the profile said, and it is checkable by eye.
     """
     assert profile_module.format_frame({('light', 0, 1): (255, 0, 0)}) == 'Up[1]=#FF0000'
+
+
+def test_an_eight_digit_colour_asks_for_the_white_channel(tmp_path):
+    """Test that RRGGBBWW parses as four components rather than being truncated."""
+    path = write(tmp_path, {'A': {'button': 'B1', 'colour': 'FF000080'}})
+    profile, _ = profile_module.load(path)
+    assert profile['A'][1] == (0xFF, 0, 0, 0x80)
+
+
+@pytest.mark.parametrize('colour', ['0xFF0000', 'FFAA', '  FF0000  ', 'FF_00_00',
+                                    'FF00000', 'GGHHII', 12345])
+def test_a_colour_that_is_not_six_or_eight_hex_digits_is_refused(tmp_path, colour):
+    """Test that the length is checked rather than left to int(colour, 16).
+
+    int() accepts a 0x prefix, underscores, surrounding whitespace and any
+    number of digits, so 'FF0000FF' parsed as blue long before white existed.
+    Telling six digits from eight is only safe once the length means something.
+    """
+    with pytest.raises(profile_module.ProfileError, match='hex digits'):
+        profile_module.load(write(tmp_path, {'A': {'button': 'B1', 'colour': colour}}))
+
+
+def test_two_lights_on_one_target_combine_across_different_widths():
+    """Test that only one entry asking for white does not truncate the other.
+
+    Zipping a three-component colour against a four-component one would drop the
+    white silently, which is the kind of thing nobody notices until a board with
+    a white chain is plugged in.
+    """
+    profile = {'a': (('button', 4), (10, 20, 30)), 'b': (('button', 4), (1, 2, 3, 40))}
+    frame = profile_module.resolve_frame({'a': 1.0, 'b': 1.0}, profile)
+    assert frame[('button', 4)] == (11, 22, 33, 40)
+
+
+def test_a_white_component_is_shown_in_a_dry_run():
+    """Test that dry-run output renders all four components rather than three."""
+    assert profile_module.format_frame({('button', 4): (255, 0, 0, 128)}) == 'B1=#FF000080'

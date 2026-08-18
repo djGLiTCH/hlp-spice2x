@@ -349,3 +349,22 @@ def test_only_the_paged_pages_carry_a_start_entry():
     device.get_caps_page(hlp.CAPS_PAGE_LIGHTS, 8)
     assert device.requests == [(hlp.CMD_GET_CAPS, bytes([hlp.CAPS_PAGE_STATE])),
                                (hlp.CMD_GET_CAPS, bytes([hlp.CAPS_PAGE_LIGHTS, 8]))]
+
+
+@pytest.mark.parametrize('colour, expected', [
+    ((255, 255, 255), (0, 0, 0, 255)),        # white rides the emitter, not the three
+    ((255, 255, 255, 0), (0, 0, 0, 255)),     # an explicit zero changes nothing
+    ((255, 255, 255, 255), (0, 0, 0, 255)),   # and an explicit full white clamps
+    ((255, 0, 0), (255, 0, 0, 0)),            # nothing achromatic to move
+    ((255, 0, 0, 255), (255, 0, 0, 255)),     # red plus white, both honoured
+    ((255, 0, 0, 128), (255, 0, 0, 128)),     # and at half
+    ((120, 200, 90), (30, 110, 0, 90)),       # the general case
+])
+def test_white_takes_the_achromatic_part_of_a_colour(colour, expected):
+    """Test the subtractive conversion a board expects a host to have applied.
+
+    A white emitter exists to make white better than three colour emitters can,
+    so the achromatic part of a colour belongs on it. Anything the profile asked
+    for on top is added and clamped.
+    """
+    assert hlp.subtractive_white(colour) == expected
