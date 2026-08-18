@@ -336,3 +336,43 @@ def test_the_run_reads_the_outcome_mask_and_reports_what_was_skipped():
     text = run_with(board, shrink)
     assert 'board skipped light(s)' in text
     assert 'does not have' in text
+
+
+def test_a_lost_receipt_does_not_abandon_the_rest_of_the_batch():
+    """Test that every entry still reaches the board when one receipt goes missing.
+
+    Per-light entries are sent one report at a time, and each waits for its reply
+    before the next is written, so a reply that never comes takes every report
+    behind it with it. Swallowing that quietly would leave most of a large
+    control unstaged and publish the frame anyway, which is worse than the dead
+    session it was meant to avoid: it is silent.
+
+    A control with thirty lights and a white colour is the case that shows it,
+    because the RGBW form carries twelve entries per report.
+    """
+    board = FakeBoard(version=(1, 3), colour_format=3, lights=M_ULTRA_LIGHTS)
+    device = board.open()
+    caps = hlp.negotiate(device)
+    profile = {'Neon': (('button', 29), (255, 255, 255, 255))}
+    staging = bridge.staging_for(profile, caps)
+    assert len(staging[('button', 29)][1]) == 30    # more than one report's worth
+
+    answered = board._stage_lights
+    lost = []
+
+    def lose_the_first(command, payload):
+        """Leave the first report unanswered, then behave normally."""
+        if not lost:
+            lost.append(True)
+            return None
+        return answered(command, payload)
+
+    board._stage_lights = lose_the_first
+    board.requests.clear()
+    result = bridge.send_frame(device, {('button', 29): (255, 255, 255, 255)},
+                               staging=staging, verify=True)
+
+    staged = {payload[1 + n * 5] for payload in board.staged(hlp.CMD_SET_LIGHT_RGBW)
+              for n in range(payload[0])}
+    assert len(staged) == 30, f"only {len(staged)} of 30 lights reached the board"
+    assert result.acknowledged is True
