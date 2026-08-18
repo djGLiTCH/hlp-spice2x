@@ -3,6 +3,10 @@
 # rather than shipping half of them
 recursive-include tests *.py *.md
 
+# the guide to the package's own modules, which setuptools would not
+# otherwise carry: only .py files come with a package by default
+include hlp_spice2x/README.md
+
 # the version history, which the release notes are drawn from
 include CHANGELOG.md
 
