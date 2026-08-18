@@ -3,5 +3,8 @@
 # rather than shipping half of them
 recursive-include tests *.py *.md
 
+# the version history, which the release notes are drawn from
+include CHANGELOG.md
+
 # example profile and the guide to capturing real ones
 recursive-include profiles *.json *.md

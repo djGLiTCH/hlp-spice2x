@@ -275,6 +275,11 @@ Profiles for real games are welcome. Generate one with `--write-profile`, fill
 it in, check it with `--dry-run`, and open a pull request adding it to
 `profiles/`. Please say which game and version it was captured from.
 
+## Changelog
+
+What changed in each release, and anything that needs action when upgrading:
+[CHANGELOG.md](CHANGELOG.md).
+
 ## Licence
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
