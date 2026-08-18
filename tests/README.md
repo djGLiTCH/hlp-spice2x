@@ -31,7 +31,7 @@ never collects them, and importing one does nothing until you call it.
 | `test_hlp_decoders.py` | The capability page decoders and the per-light staging commands, as pure functions over hand-built 64-byte replies. Hand-built on purpose: decoding a reply the fake board generated would test the fake as much as the decoder. |
 | `test_version_policy.py` | What the bridge agrees to at connect across v1.0 to v1.3, the clamping of an unknown minor, the refusal of an unknown major, and `--force`. |
 | `test_staging.py` | How a frame reaches the board's lights: control names, the expansion to all of a control's lights, per-light targeting by index, raw ranges, the white channel, and the order the passes are emitted in. |
-| `test_loop_resilience.py` | That a dropped or rejected reply to the loop's housekeeping does not end a working run, and that a board going away still does. |
+| `test_loop_resilience.py` | That a bad reply does not end a working run, and that a board going away still does. Covers the LED-map poll, the keepalive, the staging receipts read back from v1.3 firmware, and a receipt that arrives truncated rather than not at all. Also that startup clears the staging buffer, so a previous session's pixels are not inherited. |
 | `test_profile.py` | Profile parsing and frame resolution. |
 | `test_cli.py` | Argument handling and the paths that exit before connecting to anything. |
 | `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection rather than per message, NUL framing across repeated calls, and a game that hangs up surfacing as a ConnectionError, which the bridge relies on to treat a closed game as a normal ending. |

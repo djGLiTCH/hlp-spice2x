@@ -132,6 +132,10 @@ sent as white rather than as equal parts of the three colour emitters. Any white
 you give explicitly is added on top of that, so `FF0000FF` is red plus full
 white and `FF000080` is red plus half.
 
+Where two entries name the same light and only one of them asks for white, the
+white is kept. Whether a light uses the white channel is a property of the light,
+not of whichever entry happens to be listed last.
+
 This needs HLP v1.3 as well as a chain with a white emitter. On anything older
 the firmware maps achromatic colours onto the white emitter itself and ignores
 what the host sent, so the bridge drops the white and sends plain RGB, which is
