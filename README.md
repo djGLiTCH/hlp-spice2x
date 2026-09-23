@@ -78,16 +78,17 @@ upstream as
 [PR #1691](https://github.com/OpenStickCommunity/GP2040-CE/pull/1691), so until
 that merges you need a test build:
 
-**[HLP v1.3 test builds](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.3)**
+**[HLP v1.4 test builds](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.4)**
 - the current release, and the one to use
 
-There is a UF2 for every board GP2040-CE supports, on both the classic and
-LED-refactor pipelines, along with flashing and setup instructions. Enable the
-add-on in the web configurator once the board is running one of them.
+There is a UF2 for every board GP2040-CE supports, on the merged LED pipeline,
+along with flashing and setup instructions. Enable the add-on in the web
+configurator once the board is running one of them.
 
 Earlier releases are kept because the bridge supports all of them, and because
 they are what makes each version gate testable on real hardware rather than only
 against a fake:
+[v1.3](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.3) |
 [v1.2](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.2) |
 [v1.1](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.1) |
 [v1.0](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.0)

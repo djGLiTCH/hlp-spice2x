@@ -80,7 +80,7 @@ def test_no_board_points_at_the_firmware_builds(monkeypatch):
         hlp.open_device()
     message = str(caught.value)
     assert 'add-on enabled' in message
-    assert 'releases/tag/HLP_v1.3' in message
+    assert 'releases/tag/HLP_v1.4' in message
 
 
 def test_send_frame_tolerates_a_late_commit():
