@@ -28,7 +28,7 @@ never collects them, and importing one does nothing until you call it.
 
 | File | What it covers |
 |---|---|
-| `test_hlp_decoders.py` | The capability page decoders and the per-light staging commands, as pure functions over hand-built 64-byte replies. Hand-built on purpose: decoding a reply the fake board generated would test the fake as much as the decoder. Also the probe's control-table checks. |
+| `test_hlp_decoders.py` | The capability page decoders and the per-light staging commands, as pure functions over hand-built 64-byte replies. Hand-built on purpose: decoding a reply the fake board generated would test the fake as much as the decoder. Also the probe's control-table checks, and the whole probe run against the fake for its exit code. |
 | `test_version_policy.py` | What the bridge agrees to at connect across v1.0 to v1.4, the clamping of an unknown minor, the refusal of an unknown major, and `--force`. Also that a page 6 read which fails costs neither the connect nor the light table. |
 | `test_staging.py` | How a frame reaches the board's lights: control names, the expansion to all of a control's lights, per-light targeting by index, raw ranges, the white channel, and the order the passes are emitted in. Also the startup check that names controls the board lacks or cannot light. |
 | `test_loop_resilience.py` | That a bad reply does not end a working run, and that a board going away still does. Covers the LED-map poll, the keepalive, the staging receipts read back from v1.3 firmware, and a receipt that arrives truncated rather than not at all. Also that startup clears the staging buffer, so a previous session's pixels are not inherited. |

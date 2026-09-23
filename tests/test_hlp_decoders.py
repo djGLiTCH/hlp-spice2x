@@ -16,8 +16,8 @@ import pytest
 
 from hlp_spice2x import hlp
 
-from .fake_board import M_ULTRA_CONTROLS
-from .hardware_probe import check_control_table
+from .fake_board import M_ULTRA_CONTROLS, FakeBoard, attach
+from .hardware_probe import check_control_table, main as probe_main
 
 
 def caps_reply() -> bytearray:
@@ -180,6 +180,21 @@ def test_a_truncated_page_is_reported_not_indexed_past():
             decoder(bytes(8))
 
 
+def test_records_that_overrun_the_report_are_refused():
+    """Test that a count and stride reaching past the report raise rather than index past it.
+
+    A record sliced from beyond the end of a 64-byte reply is empty, and reading
+    its first byte is an IndexError, which the advisory page 6 read does not
+    catch. Refusing the page here is what keeps that read advisory.
+    """
+    for decoder, builder, stride, page in ((hlp.decode_lights, light_page, 12, 'page 5'),
+                                           (hlp.decode_controls, control_page, 6, 'page 6')):
+        reply = bytearray(builder([]))
+        reply[5], reply[6] = 10, stride     # ten records at the page's own stride need more than 64 bytes
+        with pytest.raises(hlp.HostLightingError, match=f'{page} reply is 64 bytes'):
+            decoder(bytes(reply))
+
+
 def test_page_2_omits_controls_the_board_has_no_led_for():
     """Test that unmapped controls drop out of the button map."""
     decoded = hlp.decode_led_map(led_map_page(buttons={0: (3, 1), 4: (7, 2)}))
@@ -307,17 +322,19 @@ def test_read_lights_gives_up_if_the_table_never_settles():
 
 
 def test_page_6_decodes_a_record_field_by_field():
-    """Test the record layout, the signed action, and the no-button-ID sentinel."""
+    """Test the record layout, the signed action, the no-button-ID sentinel, and that only bit 0 is lit."""
     page = hlp.decode_controls(control_page(
         [control_record(gpio_pin=14, gpio_action=32, button_id=hlp.BUTTON_NONE, flags=0),
          control_record(gpio_pin=22, gpio_action=-2, button_id=hlp.BUTTON_NONE, flags=0),
-         control_record(gpio_pin=27, gpio_action=1, button_id=0)],
+         control_record(gpio_pin=27, gpio_action=1, button_id=0),
+         control_record(gpio_pin=16, gpio_action=13, button_id=12, flags=0x02)],
         total=21, start=8, lit=16, unlit=5, fingerprint=0x15C2496E))
     assert page['records'][0] == {'ordinal': 8, 'gpio_pin': 14, 'gpio_action': 32,
                                   'button_id': hlp.BUTTON_NONE, 'lit': False}
     assert page['records'][1]['gpio_action'] == -2
     assert page['records'][2] == {'ordinal': 10, 'gpio_pin': 27, 'gpio_action': 1,
                                   'button_id': 0, 'lit': True}
+    assert page['records'][3]['lit'] is False       # a flag bit the protocol has not defined yet
     assert (page['total'], page['start'], page['lit'], page['unlit']) == (21, 8, 16, 5)
     assert page['fingerprint'] == 0x15C2496E
 
@@ -435,6 +452,54 @@ def test_the_probe_skips_the_join_while_page_5_is_empty():
     """Test that an empty light table claims nothing about which pins are lit."""
     header, controls, _ = probe_inputs()
     assert len(check_control_table(header, controls, [])) == 1
+
+
+def probe_board():
+    """Describe a v1.4 board to run the whole probe against.
+
+    The fake's lights carry no pins, so its light table is left unpublished and
+    the probe's page 5 join stays out of the way of the count check.
+    """
+    return FakeBoard(version=(1, 4), controls=M_ULTRA_CONTROLS, light_table_feature=False)
+
+
+def test_the_probe_exits_non_zero_when_page_6_disagrees_with_itself(monkeypatch, capsys):
+    """Test that a coherent board passes the probe and a header lying about its counts fails it."""
+    board = probe_board()
+    attach(monkeypatch, board)
+    assert probe_main(['']) == 0
+    assert 'MISMATCH' not in capsys.readouterr().out
+
+    honest = board._controls_page
+
+    def lying(start):
+        reply = honest(start)
+        reply[7] += 1       # one more lit than the records show
+        return reply
+
+    board._controls_page = lying
+    assert probe_main(['']) == 1
+    assert 'MISMATCH' in capsys.readouterr().out
+
+
+def test_the_probe_skips_its_checks_when_page_6_moved_under_it(monkeypatch, capsys):
+    """Test that a table that changed between the walk and the header re-read is not judged."""
+    board = probe_board()
+    honest = board._controls_page
+    reads = []
+
+    def moving(start):
+        reads.append(start)
+        if len(reads) == 4:
+            board.fingerprint += 1      # a profile switch after the three-read walk, before the re-read
+        return honest(start)
+
+    board._controls_page = moving
+    attach(monkeypatch, board)
+    assert probe_main(['']) == 0
+    out = capsys.readouterr().out
+    assert 'checks skipped' in out
+    assert 'check:' not in out
 
 
 def test_set_lights_chunks_at_the_report_capacity():
