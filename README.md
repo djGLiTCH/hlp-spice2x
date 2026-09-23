@@ -122,7 +122,7 @@ The negotiated result is printed at startup, so what the bridge decided is
 visible rather than guessed at:
 
 ```
-board: Haute42 COSMOX M Ultra (v0.7.12-354-gdf98847)
+board: Haute42 COSMOX M Ultra (v0.7.12-87-g6ed54b5)
 board speaks HLP v1.4 - light table, control table, per-light staging, outcome mask, renders at 40 Hz (white channel: no)
 takeover: whole frame, 2000 ms keepalive, applying board brightness
 controls the board gives more than one light, all of which will be lit: L3, Up
