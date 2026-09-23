@@ -156,14 +156,15 @@ leaving the rest empty. Then run the bridge:
 hlp-spice2x --port 1337 --profile iidx.json
 ```
 
-Press Ctrl-C to stop. The board returns to its own animations, and does so by
-itself within two seconds if the bridge is killed or the game exits.
+Press Ctrl-C to stop, or close the game: either way the board is handed back to
+its own animations. If the bridge is killed outright, the board takes itself
+back within two seconds.
 
 The run reports what it negotiated, warns about anything in the profile this
 board cannot light, and prints a summary when it stops:
 
 ```
-1186 frames in 29.7s (40.0/s published), 0 commits unacknowledged
+1185 frames in 29.6s (40.0/s published), 0 commits unacknowledged
 released - on-board animations restored
 ```
 
@@ -228,16 +229,16 @@ control add together and clamp.
 | `--force` | Run against a protocol major version this bridge does not support. Unsupported and for testing only; commands may not mean what the bridge thinks they mean. |
 
 `--list-lights`, `--write-profile` and `--dry-run` talk to spice2x alone, so you
-can build and check a profile on the game PC with no board attached.
-`--list-boards` talks to the boards alone. A dry run
+can build and check a profile on the game PC with no board attached. A dry run
 has no light table to resolve an `index` entry against, so it shows those
-entries as the profile wrote them, such as `Up[1]`.
+entries as the profile wrote them, such as `Up[1]`. `--list-boards` talks to
+the boards alone.
 
 ## Notes
 
-Frames are only sent when something actually changes; quiet frames send a single
-keepalive instead. Against a stand-in server with static lighting, 703 polls
-produced one board update.
+Frames are only sent when something actually changes. While nothing does, a
+keepalive every half timeout holds the takeover instead. Against a stand-in
+server with static lighting, 703 polls produced one board update.
 
 Streaming faster than the board renders is wasted work, so the bridge matches a
 board that reports a slower rate and caps a faster one at 60: cabinet lighting
@@ -288,6 +289,7 @@ What changed in each release, and anything that needs action when upgrading:
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
 
-`hlp_spice2x/hlp.py` is a trimmed copy of the Host Lighting helpers from
-[gp2040ce-binary-tools](https://github.com/OpenStickCommunity/gp2040ce-binary-tools),
-vendored so this tool needs nothing but `hidapi`.
+`hlp_spice2x/hlp.py` began as a trimmed copy of the Host Lighting helpers
+proposed for gp2040ce-binary-tools in [PR #12](https://github.com/OpenStickCommunity/gp2040ce-binary-tools/pull/12), vendored so this tool
+needs nothing but `hidapi`. It has since grown the capability negotiation the
+bridge relies on, which those helpers do not have.

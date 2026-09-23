@@ -41,13 +41,13 @@ surface is clear:
 Pages 2 and 5 answer different questions. Page 2 is "where do I write this
 control"; page 5 is the board's inventory of lights.
 
-This is a trimmed copy of the Host Lighting helpers from gp2040ce-binary-tools,
-vendored so the bridge needs nothing but hidapi. What is trimmed is the tooling
-around the protocol - the ping, caps, fill and reboot entry points, their
-printers and the CLI - none of which a bridge has any use for. What is kept is
-the protocol surface itself, so teaching the bridge a new protocol version is a
-change here rather than a second client. If those tools land upstream, this
-module can be replaced by an import of gp2040ce_bintools.hostlighting.
+This began as a trimmed copy of the Host Lighting helpers proposed for
+gp2040ce-binary-tools, vendored so the bridge needs nothing but hidapi. The
+framing and decoders still follow those helpers. The capability layer -
+negotiate and HostLightingCapabilities - and the timeout and disconnect
+handling are this project's own, so the module is no longer a drop-in for
+gp2040ce_bintools.hostlighting. Teaching the bridge a new protocol version is
+a change here rather than a second client.
 
 See docs/host-lighting.md in the GP2040-CE repository for the protocol
 reference.
@@ -175,7 +175,8 @@ CONTROL_NAMES.update({value: name for name, value in EXTENDED_TARGETS.items()})
 # of their lights. The player LEDs, turbo and the case strip are left out on
 # purpose: each already has a staging path that covers the whole of it in one
 # entry, and a case strip is routinely dozens of lights, so expanding one would
-# buy nothing and cost several extra reports in every frame.
+# buy nothing and cost several extra reports in every frame. They are also the
+# controls page 6 can report absent, each sitting on a pin under its own ID.
 ONE_LAMP_CONTROLS = frozenset(range(0, 20)) | frozenset(range(30, 42))
 
 
@@ -470,13 +471,15 @@ class HostLightingCapabilities:
     numbers, so a new protocol version adds a field here instead of a version
     comparison at every branch that cares.
 
-    Two of these deliberately do not follow from the version. The light table is
-    gated on the page 1 feature bit as well as the version, because a board that
-    enumerates before its render core has populated the light registry will
-    legitimately report the bit clear and answer page 5 with nothing. And the
-    LED framework byte is not consulted at all: the protocol says to branch on
-    the feature bits and the per-record flags and never on it, and a board that
-    does not report a framework is not thereby a lesser board.
+    Three of these deliberately do not follow from the version alone. The light
+    and control tables are gated on their page 1 feature bits as well, because a
+    cleared bit is a promise the page returns nothing: a board that enumerates
+    before its render core has populated the light registry legitimately
+    reports the light-table bit clear. And host-supplied white needs a white
+    chain as well as v1.3. The LED framework byte is not consulted at all: the
+    protocol says to branch on the feature bits and the per-record flags and
+    never on it, and a board that does not report a framework is not thereby a
+    lesser board.
     """
 
     def __init__(self, major=None, minor=None, reported=None, state=None, led_map=None,

@@ -2,9 +2,9 @@
 
 The interesting behaviour is what a bare control name does on a board that
 gives that control more than one light. Naming the control is still the primary
-path, because that is what lets one profile work across layouts, but on a board
-that publishes a light table the extra lights have to be staged explicitly or
-they never light.
+path, because that is what lets one profile work across layouts, but the classic
+pipeline colours only the one light a control's configuration names, so every
+light is staged explicitly from the light table on any board that publishes one.
 
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later

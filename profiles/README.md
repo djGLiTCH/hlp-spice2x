@@ -96,7 +96,8 @@ control add together and clamp.
 ## Finding out what your board has
 
 Running the bridge prints which controls own more than one light. For the full
-picture - every light, which control owns it, and its ordinal - use the probe:
+picture - every light, which control owns it, and its ordinal - use the probe,
+from a checkout of this repository or the tools download:
 
 ```
 python -m tests.hardware_probe
@@ -104,7 +105,9 @@ python -m tests.hardware_probe
 
 It is read-only, so it is safe to run while a game is going. It prints the
 board's light table grouped by control, marking any control that owns more than
-one light, which is exactly what you need before writing an `index` entry.
+one light, which is exactly what you need before writing an `index` entry. On
+v1.4 firmware it also prints the control table: every control the board has, lit
+or not.
 
 ## Boards that give one control several lights
 
@@ -146,6 +149,10 @@ what renders correctly there. It says so once at startup rather than per frame.
 Anything wrong with the profile itself - an unknown control name, a malformed
 range, a colour that is not hex - is reported before the bridge connects to
 anything.
+
+A mapped control the board cannot light is not an error. The bridge names it at
+startup and carries on: as having no LED on this board, or, from v1.4, as not
+being on this board at all.
 
 Whether the board can honour an `index` entry is a different question, and one
 only the board can answer, so it is settled at connect:

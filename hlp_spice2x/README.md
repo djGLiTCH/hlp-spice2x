@@ -11,11 +11,11 @@ spice2x  --(Spice API, TCP/JSON)-->  hlp-spice2x  --(HID)-->  GP2040-CE board
 
 | Module | Lines | What it is |
 |---|---|---|
-| `hlp.py` | 1214 | The protocol. Framing, capability pages, staging commands, and what each version of the protocol offers. Depends on nothing but `hidapi`. |
+| `hlp.py` | 1217 | The protocol. Framing, capability pages, staging commands, and what each version of the protocol offers. Depends on nothing but `hidapi`. |
 | `bridge.py` | 747 | The loop. Polls, resolves a frame, stages it, publishes it, and keeps the board's takeover alive. |
 | `profile.py` | 198 | Profiles. Turns a JSON file into targets and colours, and a set of light levels into a frame. |
 | `spiceapi.py` | 122 | The game side. A minimal Spice API client, including the RC4 the password option needs. |
-| `__main__.py` | 151 | The command line. Parses arguments, opens both ends, and hands them to the loop. |
+| `__main__.py` | 152 | The command line. Parses arguments, opens both ends, and hands them to the loop. |
 
 Dependencies run one way. `hlp.py` and `spiceapi.py` know nothing about anything
 else here, `profile.py` knows only `hlp.py`, and `bridge.py` knows both. Nothing
@@ -75,11 +75,12 @@ whatever the last one left.
 
 ## Where the vendored client came from
 
-`hlp.py` is a trimmed copy of the Host Lighting helpers in
-[gp2040ce-binary-tools](https://github.com/OpenStickCommunity/gp2040ce-binary-tools),
-vendored so the bridge needs nothing but `hidapi`. What is trimmed is the tooling
-around the protocol; what is kept is the protocol surface itself. Its class names
-match upstream so the module could one day be replaced by an import of
+`hlp.py` began as a trimmed copy of the Host Lighting helpers proposed for
+gp2040ce-binary-tools in [PR #12](https://github.com/OpenStickCommunity/gp2040ce-binary-tools/pull/12), vendored so the bridge needs
+nothing but `hidapi`. The framing, decoders and class names still follow those
+helpers, so a fix in one carries over to the other. The capability layer -
+`negotiate` and `HostLightingCapabilities` - and the timeout and disconnect
+handling are this project's own, so the module is no longer a drop-in for
 `gp2040ce_bintools.hostlighting`.
 
 ## Testing a change

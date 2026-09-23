@@ -2,8 +2,8 @@
 
 Reads the game's lights from spice2x, turns them into a frame through the
 profile, and publishes that frame to the board. Frames are only sent when
-something changed; quiet frames send a single PING instead, which is enough to
-hold the board's takeover without republishing an identical frame.
+something changed. While nothing does, a PING every half keepalive timeout
+holds the board's takeover without republishing an identical frame.
 
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later

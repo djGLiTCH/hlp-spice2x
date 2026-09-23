@@ -17,7 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Bridge spice2x cabinet lighting onto a GP2040-CE board.")
     parser.add_argument("--host", default="127.0.0.1", help="spice2x API host (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=1337,
-                        help="the port passed to spice2x's -api (1337 by convention, not a default)")
+                        help="the port passed to spice2x's -api (default 1337, the usual choice; "
+                             "spice2x itself has no default)")
     parser.add_argument("--password", default="", help="spice2x API password, if -apipass was used")
     parser.add_argument("--profile", help="JSON profile mapping light names to controls")
     parser.add_argument("--list-lights", action="store_true",

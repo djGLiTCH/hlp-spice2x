@@ -62,9 +62,9 @@ def load(path: str) -> tuple:
 
     :param path: path to the profile JSON
     :return: (profile, warnings), where profile maps a light name to
-        (target, rgb) with target being ('button', id), ('light', id, index)
-        or ('range', start, count), and warnings is a list of non-fatal
-        complaints about entries that were skipped
+        (target, colour) with target being ('button', id), ('light', id, index)
+        or ('range', start, count) and colour (r, g, b) or (r, g, b, w), and
+        warnings is a list of non-fatal complaints about entries that were skipped
     """
     with open(path, encoding='utf-8') as handle:
         profile = json.load(handle)

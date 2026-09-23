@@ -33,7 +33,7 @@ never collects them, and importing one does nothing until you call it.
 | `test_staging.py` | How a frame reaches the board's lights: control names, the expansion to all of a control's lights, per-light targeting by index, raw ranges, the white channel, and the order the passes are emitted in. Also the startup check that names controls the board lacks or cannot light. |
 | `test_loop_resilience.py` | That a bad reply does not end a working run, and that a board going away still does. Covers the LED-map poll, the keepalive, the staging receipts read back from v1.3 firmware, and a receipt that arrives truncated rather than not at all. Also that startup clears the staging buffer, so a previous session's pixels are not inherited. |
 | `test_profile.py` | Profile parsing and frame resolution. |
-| `test_cli.py` | Argument handling and the paths that exit before connecting to anything. |
+| `test_cli.py` | Argument handling, `--list-boards`, and the paths that exit before connecting to anything. |
 | `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection rather than per message, NUL framing across repeated calls, and a game that hangs up surfacing as a ConnectionError, which the bridge relies on to treat a closed game as a normal ending. |
 | `test_device_errors.py` | Telling a late reply apart from a device that has gone away, and finding the right board when several are attached. |
 
@@ -73,6 +73,9 @@ board.drop.add(hlp.CMD_GET_CAPS)     # leave that command unanswered
 board.reject.add(hlp.CMD_PING)       # answer it with a non-OK status
 ```
 
+`attach(monkeypatch, *boards)` makes device discovery find several fake boards,
+which is how picking one of several is tested.
+
 `M_ULTRA_LIGHTS` is a real board's light table - a Haute42 COSMOX M Ultra Gen 2,
 46 lights, checked record for record against the hardware. It is a useful
 fixture because it is awkward in the ways real boards are: two controls own two
@@ -86,8 +89,9 @@ wire format over a loopback socket, with a hook for animating its lights.
 ## The hardware checks
 
 Each takes an optional board-ID prefix, which only matters with several boards
-attached. All of them release the board and restore its own animations when they
-finish, including on failure.
+attached; `hlp-spice2x --list-boards` shows each board's ID. Those that take the
+lighting over clear its staging buffer first, and release the board and restore
+its own animations when they finish, including on failure.
 
 ### `hardware_probe.py` - what does this board say about itself
 
@@ -98,8 +102,8 @@ python -m tests.hardware_probe
 **Read-only.** Sends `PING` and `GET_CAPS` and nothing else, so it never takes
 the lighting over and is safe to run mid-game.
 
-Prints the protocol version, the board's identity, and every capability page
-decoded field by field: the light table grouped by the control that owns each
+Prints the protocol version, the board's identity, and each capability page the
+bridge reads, decoded field by field: the light table grouped by the control that owns each
 light, with a note against any control that owns more than one, then from v1.4
 the control table, one pin per line, marking controls wired to more than one pin.
 It checks the control table against its own counts and against the light

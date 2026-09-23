@@ -5,8 +5,9 @@ travel through the real transport: the same framing, sequence handling and
 reply matching that runs against a real board.
 
 Hardware and firmware are described separately, because they are separate. A
-board wires the lights it wires whatever firmware it runs, so `lights` describes
-the hardware and `version` decides how much of it the firmware will admit to:
+board wires the lights it wires whatever firmware it runs, so `lights` and
+`controls` describe the hardware and `version` decides how much of it the
+firmware will admit to:
 page 5 does not exist before v1.1, the extended controls do not stage before
 v1.2, SET_LIGHT_RGBW does not exist before v1.3, page 6 does not exist before
 v1.4, and the per-entry outcome mask reads as all-zeroes on anything older than
@@ -20,10 +21,10 @@ SPDX-License-Identifier: GPL-3.0-or-later
 from hlp_spice2x import hlp
 
 # The reference board, as it actually reports itself: a Haute42 COSMOX M Ultra
-# Gen 2 running the LED-refactor pipeline. 46 lights, and the two controls that
-# make it the board for multi-light work - Up owns ordinals 3 and 12, L3 owns 13
-# and 15 - plus a 30-light case strip, which is what makes expanding whole-strip
-# controls a bad idea rather than merely a wasteful one.
+# Gen 2, identical on the LED-refactor pipeline and on v1.4. 46 lights, and the
+# two controls that make it the board for multi-light work - Up owns ordinals 3
+# and 12, L3 owns 13 and 15 - plus a 30-light case strip, which is what makes
+# expanding whole-strip controls a bad idea rather than merely a wasteful one.
 M_ULTRA_LIGHTS = [(2, 0), (1, 1), (3, 2), (0, 3), (6, 4), (7, 5), (9, 6), (8, 7),
                   (4, 8), (5, 9), (11, 10), (10, 11), (0, 12), (14, 13), (15, 14),
                   (14, 15)] + [(29, led) for led in range(16, 46)]

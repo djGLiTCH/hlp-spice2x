@@ -2,7 +2,8 @@
 
 A board is a USB device, so it can vanish mid-run. The distinction that
 matters is between a reply arriving late, which is normal under load and worth
-carrying on through, and the device failing, which is not.
+carrying on through, and the device failing, which is not. Also finding the right
+board when several are attached.
 
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
