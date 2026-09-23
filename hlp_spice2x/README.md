@@ -1,6 +1,6 @@
 # The package
 
-Five modules, about 2200 lines. This is a guide to reading them, for anyone
+Five modules, about 2400 lines. This is a guide to reading them, for anyone
 changing the bridge or implementing Host Lighting support of their own.
 
 ```
@@ -11,8 +11,8 @@ spice2x  --(Spice API, TCP/JSON)-->  hlp-spice2x  --(HID)-->  GP2040-CE board
 
 | Module | Lines | What it is |
 |---|---|---|
-| `hlp.py` | 1046 | The protocol. Framing, capability pages, staging commands, and what each version of the protocol offers. Depends on nothing but `hidapi`. |
-| `bridge.py` | 727 | The loop. Polls, resolves a frame, stages it, publishes it, and keeps the board's takeover alive. |
+| `hlp.py` | 1190 | The protocol. Framing, capability pages, staging commands, and what each version of the protocol offers. Depends on nothing but `hidapi`. |
+| `bridge.py` | 747 | The loop. Polls, resolves a frame, stages it, publishes it, and keeps the board's takeover alive. |
 | `profile.py` | 198 | Profiles. Turns a JSON file into targets and colours, and a set of light levels into a frame. |
 | `spiceapi.py` | 122 | The game side. A minimal Spice API client, including the RC4 the password option needs. |
 | `__main__.py` | 130 | The command line. Parses arguments, opens both ends, and hands them to the loop. |
@@ -31,10 +31,10 @@ worth reading first, in the order a host uses them:
   and decides what this board can do. Everything downstream branches on its
   result rather than on a version number.
 - `HostLightingCapabilities` - that result. Each property answers one question a
-  call site wants to ask. Two of them deliberately do not follow from the version
-  alone, and the docstrings say why.
-- `decode_state`, `decode_led_map`, `decode_lights` - the capability pages, field
-  by field. Pure functions over a 64-byte reply.
+  call site wants to ask. Three of them deliberately do not follow from the
+  version alone, and the docstrings say why.
+- `decode_state`, `decode_led_map`, `decode_lights`, `decode_controls` - the
+  capability pages, field by field. Pure functions over a 64-byte reply.
 - `send`, `request`, `request_ok` - the transport. Staging is fire-and-forget for
   throughput; only the commit that publishes a frame is waited on.
 
@@ -85,5 +85,5 @@ match upstream so the module could one day be replaced by an import of
 ## Testing a change
 
 `tests/README.md` covers the suite and the checks that need a board. The short
-version: `pytest` proves a change against all four protocol versions with no
+version: `pytest` proves a change against all five protocol versions with no
 hardware, and `python -m tests.hardware_sweep` confirms it on a real one.

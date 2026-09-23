@@ -9,8 +9,8 @@ Every request is `[0]=command, [1]=sequence, [2..]=payload`; the reply echoes
 the command with bit 7 set: `[0]=command|0x80, [1]=sequence, [2]=status,
 [3..]=payload`.
 
-The board describes itself through GET_CAPS pages. The protocol defines six;
-this module decodes the four the bridge needs, and the rest are listed so the
+The board describes itself through GET_CAPS pages. The protocol defines seven;
+this module decodes the five the bridge needs, and the rest are listed so the
 surface is clear:
 
 * page 0 (identity): factory-unique board ID, board label, firmware version.
@@ -33,6 +33,10 @@ surface is clear:
 * page 5 (light table, protocol v1.1): every light the board has, naming the
   control that owns each one. This is the page that can say a control owns
   more than one light, which page 2's one-range-per-control table cannot.
+* page 6 (control table, protocol v1.4): every GPIO pin carrying an action,
+  lit or not. The only page that can say a control does not exist. Read here
+  for the startup profile check only: its lit bits lag the light registry, so
+  page 5 decides what is lit.
 
 Pages 2 and 5 answer different questions. Page 2 is "where do I write this
 control"; page 5 is the board's inventory of lights.
@@ -65,7 +69,7 @@ REPORT_SIZE = 64
 # highest known rather than refused; a different major may have changed any of
 # them underneath, and is refused.
 SUPPORTED_MAJOR = 1
-MAX_SUPPORTED_MINOR = 3
+MAX_SUPPORTED_MINOR = 4
 PING_MAGIC = b'GPHL'
 
 # command IDs, grouped by function range
@@ -92,15 +96,17 @@ CAPS_PAGE_LED_MAP = 2
 CAPS_PAGE_ANIMATIONS = 3
 CAPS_PAGE_POSITIONS = 4
 CAPS_PAGE_LIGHTS = 5            # protocol v1.1
+CAPS_PAGE_CONTROLS = 6          # protocol v1.4
 
 # pages answered a slice at a time, taking a start entry in payload byte [3]
-PAGED_CAPS_PAGES = (CAPS_PAGE_POSITIONS, CAPS_PAGE_LIGHTS)
+PAGED_CAPS_PAGES = (CAPS_PAGE_POSITIONS, CAPS_PAGE_LIGHTS, CAPS_PAGE_CONTROLS)
 
 # page 1 fields appended by protocol v1.1. Replies are zero-filled before the
 # board builds them, so firmware predating these reports them as zero, which
 # reads correctly as "nothing supported, nothing stated" rather than as a value.
 FEATURE_POSITIONS = 1 << 0
 FEATURE_LIGHT_TABLE = 1 << 1
+FEATURE_CONTROL_TABLE = 1 << 2  # protocol v1.4, set from boot
 
 # page 5 record flags. Both are positive assertions: a set bit is the board
 # vouching for something, so a record left at zero claims nothing.
@@ -112,6 +118,11 @@ LIGHT_FLAG_PER_LIGHT = 0x02     # read from a per-light table, describes one lig
 # not silently misalign an older decoder. Anything narrower is missing fields
 # that are read below, so it is refused rather than guessed at.
 LIGHT_STRIDE_MIN = 12
+
+# page 6: the narrowest record this decoder can read, and the record's lit flag.
+# The lit bit lags the light registry; page 5 decides what is lit.
+CONTROL_STRIDE_MIN = 6
+CONTROL_FLAG_LIT = 0x01
 
 # a page 1 or page 2 slot with nothing in it, and the page 5 spelling of the
 # same byte - they answer different questions, so both names are kept
@@ -406,6 +417,48 @@ def decode_lights(reply: bytes) -> dict:
     }
 
 
+def decode_controls(reply: bytes) -> dict:
+    """Decode one page of GET_CAPS page 6, the control table (protocol v1.4).
+
+    Page 6 reply layout: [3] records in total, [4] the ordinal this page starts
+    at, [5] records in this page, [6] record stride, [7] lit count, [8] unlit
+    count, [9] page flags, [10..] the records, [60..63] the fingerprint.
+
+    One record per GPIO pin with an action. The pin is the key; two pins with
+    one action are two records with the same button ID. Keys match page 5's, so
+    the two join on gpio_pin. The lit bit lags the light registry and is not a
+    lighting verdict.
+
+    :param reply: a page 6 reply report
+    :return: the page header plus its decoded records
+    """
+    _require_length(reply, 64, 'page 6')
+    total, start, count, stride = reply[3], reply[4], reply[5], reply[6]
+    if count and stride < CONTROL_STRIDE_MIN:
+        raise HostLightingError(f"page 6 record stride is {stride}, need at least {CONTROL_STRIDE_MIN}")
+    _require_length(reply, 10 + count * stride, 'page 6')
+    records = []
+    for n in range(count):
+        record = reply[10 + n * stride:10 + (n + 1) * stride]
+        records.append({
+            'ordinal': start + n,
+            'gpio_pin': record[0],
+            'gpio_action': int.from_bytes(record[1:3], 'little', signed=True),
+            'button_id': record[3],
+            'lit': bool(record[4] & CONTROL_FLAG_LIT),
+        })
+    return {
+        'total': total,
+        'start': start,
+        'stride': stride,
+        'lit': reply[7],
+        'unlit': reply[8],
+        'flags': reply[9],
+        'records': records,
+        'fingerprint': int.from_bytes(reply[60:64], 'little'),
+    }
+
+
 class HostLightingCapabilities:
     """What the board on the other end can do, decided once at connect.
 
@@ -440,6 +493,7 @@ class HostLightingCapabilities:
         self.state = state or {}
         self.led_map = led_map or {}
         self.lights = []
+        self.controls = []
 
     @property
     def lights(self) -> list:
@@ -460,6 +514,24 @@ class HostLightingCapabilities:
             if not record['synthesised']:
                 owners.setdefault(record['button_id'], []).append(record)
         self.owners = owners
+
+    @property
+    def controls(self) -> list:
+        """The board's control records, in the order page 6 reported them."""
+        return self._controls
+
+    @controls.setter
+    def controls(self, records) -> None:
+        """Cache the records, and the pins indexed by button ID.
+
+        Records with no button ID (turbo, modifiers) stay in the list and out of the index.
+        """
+        self._controls = list(records)
+        pins = {}
+        for record in self._controls:
+            if record['button_id'] != BUTTON_NONE:
+                pins.setdefault(record['button_id'], []).append(record)
+        self.pins = pins
 
     @classmethod
     def absent(cls):
@@ -488,6 +560,15 @@ class HostLightingCapabilities:
         is re-derived from the current page 1 rather than frozen at connect.
         """
         return (self.minor or 0) >= 1 and bool(self.state.get('features', 0) & FEATURE_LIGHT_TABLE)
+
+    @property
+    def control_table(self) -> bool:
+        """Whether page 6 will return entries (v1.4).
+
+        Needs the version and the page 1 feature bit, and is re-derived from the
+        current page 1 as light_table is.
+        """
+        return (self.minor or 0) >= 4 and bool(self.state.get('features', 0) & FEATURE_CONTROL_TABLE)
 
     @property
     def per_light(self) -> bool:
@@ -553,6 +634,18 @@ class HostLightingCapabilities:
         """
         return any(record['button_id'] == button_id for record in self.lights)
 
+    def lacks_control(self, button_id: int) -> bool:
+        """Say whether the control table shows the board has no such control.
+
+        False wherever page 6 cannot say: no table was read, or the ID is not a
+        pin-carried control. The special targets 24-29 are lights, not controls,
+        and a turbo pin carries no button ID, so they are never judged here.
+
+        :param button_id: the control to ask about
+        :return: True only if a populated control table leaves the control out
+        """
+        return bool(self.controls) and button_id in ONE_LAMP_CONTROLS and button_id not in self.pins
+
     def stage_op(self, record) -> tuple:
         """Say how to colour one light on this firmware.
 
@@ -609,6 +702,7 @@ class HostLightingCapabilities:
         self.state = read_state(device)
         self.led_map = read_led_map(device)
         self.lights = read_light_table(device, self)
+        self.controls = read_control_table(device, self)
 
     @property
     def render_hz(self):
@@ -637,8 +731,10 @@ class HostLightingCapabilities:
             return "no board: running without one, so nothing was negotiated"
         spoken = f"v{self.reported[0]}.{self.reported[1]}"
         driven = '' if self.reported[1] == self.minor else f", driven as v{self.major}.{self.minor}"
-        offers = ['light table' if self.light_table else 'no light table',
-                  'per-light staging' if self.per_light else 'no per-light staging']
+        offers = ['light table' if self.light_table else 'no light table']
+        if self.controls:
+            offers.append('control table')
+        offers.append('per-light staging' if self.per_light else 'no per-light staging')
         if self.outcome_mask:
             offers.append('outcome mask')
         offers.append(f"renders at {self.render_hz} Hz" if self.render_hz
@@ -768,24 +864,48 @@ class HostLightingDevice:
         :raises HostLightingError: if the board stops making progress, or keeps
             changing the table while it is being read
         """
+        return self._walk(CAPS_PAGE_LIGHTS, decode_lights, 'light table', retries)
+
+    def read_controls(self, retries: int = 2) -> tuple:
+        """Read every page 6 record, walking the pages (protocol v1.4).
+
+        Walks as read_lights does: a walk the fingerprint moved under is restarted.
+
+        :param retries: how many times to restart a walk the board changed under
+        :return: (the board's control records, the fingerprint they were read at)
+        :raises HostLightingRejected: on firmware without page 6 (pre-v1.4)
+        :raises HostLightingError: if the board stops making progress, or keeps
+            changing the table while it is being read
+        """
+        return self._walk(CAPS_PAGE_CONTROLS, decode_controls, 'control table', retries)
+
+    def _walk(self, page_number: int, decode, what: str, retries: int) -> tuple:
+        """Read a paged table whole, restarting if its fingerprint moves mid-walk.
+
+        :param page_number: the paged GET_CAPS page to walk
+        :param decode: the decoder for one reply of that page
+        :param what: the table's name, for errors
+        :param retries: how many times to restart a walk the board changed under
+        :return: (the records, the fingerprint they were read at)
+        """
         for _ in range(retries + 1):
             records = []
             fingerprint = None
             while True:
-                page = decode_lights(self.get_caps_page(CAPS_PAGE_LIGHTS, len(records)))
+                page = decode(self.get_caps_page(page_number, len(records)))
                 if fingerprint is None:
                     fingerprint = page['fingerprint']
                 elif page['fingerprint'] != fingerprint:
                     break  # the table moved mid-walk, so this walk is not coherent
                 if not page['records']:
                     if len(records) < page['total']:
-                        raise HostLightingError(f"light table stalled at {len(records)} of "
+                        raise HostLightingError(f"{what} stalled at {len(records)} of "
                                                 f"{page['total']} records")
                     return records, fingerprint
                 records.extend(page['records'])
                 if len(records) >= page['total']:
                     return records, fingerprint
-        raise HostLightingError("light table kept changing while it was being read")
+        raise HostLightingError(f"{what} kept changing while it was being read")
 
     def _light_reports(self, command: int, entries: list, capacity: int, width: int) -> list:
         """Split per-light entries into the reports needed to carry them.
@@ -982,6 +1102,29 @@ def read_light_table(device: HostLightingDevice, caps: HostLightingCapabilities)
     return records
 
 
+def read_control_table(device: HostLightingDevice, caps: HostLightingCapabilities) -> list:
+    """Read the board's control table, where it has one to report.
+
+    Advisory: the bridge uses page 6 only for the startup profile check, so any
+    failure short of the board going away reads as no table. A page 6 fault
+    must never cost a connect or a re-resolve of the lights.
+
+    :param device: an opened HostLightingDevice
+    :param caps: the negotiated capabilities
+    :return: the board's control records, empty where it has none or they could not be read
+    :raises HostLightingDisconnected: if the board has gone away
+    """
+    if not caps.control_table:
+        return []
+    try:
+        records, _ = device.read_controls()
+    except HostLightingDisconnected:
+        raise
+    except HostLightingError:
+        return []
+    return records
+
+
 def negotiate(device: HostLightingDevice, force: bool = False) -> HostLightingCapabilities:
     """Agree what the board can do, once, before any streaming starts.
 
@@ -1009,6 +1152,7 @@ def negotiate(device: HostLightingDevice, force: bool = False) -> HostLightingCa
                                     reported=(major, minor), state=read_state(device),
                                     led_map=read_led_map(device), forced=unsupported)
     caps.lights = read_light_table(device, caps)
+    caps.controls = read_control_table(device, caps)
     return caps
 
 

@@ -16,7 +16,7 @@ import pytest
 from hlp_spice2x import bridge, hlp
 from hlp_spice2x.__main__ import build_parser
 
-from .fake_board import FakeBoard, OneShotConnection
+from .fake_board import M_ULTRA_CONTROLS, M_ULTRA_LIGHTS, FakeBoard, OneShotConnection
 
 RED_PROFILE = {'P1': (('button', 4), (255, 0, 0))}
 
@@ -34,25 +34,28 @@ def run_against(board, profile=None, **kwargs):
     return '\n'.join(lines)
 
 
-@pytest.mark.parametrize('minor, light_table, per_light, outcome_mask', [
-    (0, False, False, False),
-    (1, True, False, False),
-    (2, True, True, False),
-    (3, True, True, True),
+@pytest.mark.parametrize('minor, light_table, per_light, outcome_mask, control_table', [
+    (0, False, False, False, False),
+    (1, True, False, False, False),
+    (2, True, True, False, False),
+    (3, True, True, True, False),
+    (4, True, True, True, True),
 ])
-def test_each_version_offers_exactly_what_it_added(minor, light_table, per_light, outcome_mask):
+def test_each_version_offers_exactly_what_it_added(minor, light_table, per_light, outcome_mask,
+                                                   control_table):
     """Test that each protocol version buys precisely the capabilities it introduced."""
     caps = negotiated(version=(1, minor))
     assert caps.light_table is light_table
     assert caps.per_light is per_light
     assert caps.outcome_mask is outcome_mask
+    assert caps.control_table is control_table
 
 
-@pytest.mark.parametrize('reported_minor', [4, 9, 255])
+@pytest.mark.parametrize('reported_minor', [5, 9, 255])
 def test_a_newer_minor_is_driven_as_the_highest_known(reported_minor):
     """Test that a board newer than this client is clamped rather than refused.
 
-    A minor version only ever adds, so a v1.4 board keeps every v1.3 promise.
+    A minor version only ever adds, so a v1.5 board keeps every v1.4 promise.
     Refusing it would strand the bridge on firmware that is strictly better at
     everything it is being asked to do.
     """
@@ -64,9 +67,10 @@ def test_a_newer_minor_is_driven_as_the_highest_known(reported_minor):
 
 def test_a_newer_minor_behaves_exactly_like_the_highest_known():
     """Test that a clamped board takes the same paths as the version it clamps to."""
-    newer, known = negotiated(version=(1, 4)), negotiated(version=(1, 3))
-    for capability in ('light_table', 'per_light', 'outcome_mask', 'host_white'):
+    newer, known = negotiated(version=(1, 5)), negotiated(version=(1, 4))
+    for capability in ('light_table', 'per_light', 'outcome_mask', 'host_white', 'control_table'):
         assert getattr(newer, capability) == getattr(known, capability)
+    assert newer.controls == known.controls
 
 
 def test_a_different_major_is_refused_and_says_both_versions():
@@ -140,6 +144,115 @@ def test_page_five_does_not_exist_before_it_was_added():
         device.read_lights()
 
 
+def control_table_requests(board) -> list:
+    """Every GET_CAPS request the board was sent for page 6."""
+    return [payload for payload in board.staged(hlp.CMD_GET_CAPS)
+            if payload[0] == hlp.CAPS_PAGE_CONTROLS]
+
+
+def m_ultra(version=(1, 4), **kwargs):
+    """Describe the reference board, lights and pins both."""
+    return FakeBoard(version=version, lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS, **kwargs)
+
+
+def test_a_v1_4_board_negotiates_its_control_table():
+    """Test that page 6 is read at connect and indexed by button ID."""
+    caps = hlp.negotiate(m_ultra().open())
+    assert caps.control_table is True
+    assert len(caps.controls) == 21
+    assert [record['gpio_pin'] for record in caps.pins[0]] == [2, 27]      # Up
+    assert [record['gpio_pin'] for record in caps.pins[14]] == [18, 26]    # L3
+    assert hlp.BUTTON_NONE not in caps.pins                                # turbo's pin
+
+
+def test_bit_2_from_older_firmware_is_not_a_control_table():
+    """Test that the control table needs v1.4 as well as the bit, which is reserved before it."""
+    state = {'features': hlp.FEATURE_CONTROL_TABLE}
+    assert hlp.HostLightingCapabilities(major=1, minor=3, state=state).control_table is False
+    assert hlp.HostLightingCapabilities(major=1, minor=4, state=state).control_table is True
+
+
+def test_page_6_is_not_read_when_the_feature_bit_is_clear():
+    """Test that a cleared control-table bit is taken at its word."""
+    board = m_ultra(control_table_feature=False)
+    caps = hlp.negotiate(board.open())
+    assert caps.control_table is False
+    assert caps.controls == []
+    assert control_table_requests(board) == []
+
+
+@pytest.mark.parametrize('minor', [0, 1, 2, 3])
+def test_page_6_is_never_requested_before_v1_4(minor):
+    """Test that firmware older than the page is never asked for it."""
+    board = FakeBoard(version=(1, minor))
+    hlp.negotiate(board.open())
+    assert control_table_requests(board) == []
+
+
+def test_a_v1_4_board_refusing_page_6_has_an_empty_table():
+    """Test that INVALID_ARG on page 6 reads as no table rather than as an error."""
+    board = m_ultra()
+    board._controls_page = lambda start: board._reply(status=2)
+    caps = hlp.negotiate(board.open())
+    assert caps.controls == []
+    assert len(caps.lights) == 46
+
+
+def test_a_page_6_read_that_fails_does_not_fail_the_connect():
+    """Test that an unanswered page 6 leaves the board driven as it was at v1.3."""
+    board = m_ultra()
+    board._controls_page = lambda start: None      # never answered
+    caps = hlp.negotiate(board.open())
+    assert caps.controls == []
+    assert len(caps.lights) == 46
+    assert 'control table' not in caps.summary()
+
+
+def test_a_board_going_away_during_page_6_is_still_reported():
+    """Test that the advisory read does not swallow a vanished board."""
+    board = m_ultra()
+    device = board.open()
+    caps = hlp.negotiate(device)
+    original = board.write
+
+    def unplugged(data):
+        if data[1] == hlp.CMD_GET_CAPS and data[3] == hlp.CAPS_PAGE_CONTROLS:
+            raise OSError('device disconnected')
+        return original(data)
+
+    board.write = unplugged
+    with pytest.raises(hlp.HostLightingDisconnected):
+        hlp.read_control_table(device, caps)
+
+
+def test_refresh_re_reads_the_control_table():
+    """Test that a fingerprint change re-reads page 6 along with the pages it certifies."""
+    board = m_ultra()
+    device = board.open()
+    caps = hlp.negotiate(device)
+    board.controls = M_ULTRA_CONTROLS[:12]
+    caps.refresh(device)
+    assert len(caps.controls) == 12
+
+
+def test_a_failed_page_6_re_read_does_not_hold_up_the_light_table():
+    """Test that refresh still lands the new light table when page 6 cannot be read."""
+    board = m_ultra()
+    device = board.open()
+    caps = hlp.negotiate(device)
+    board.lights = board.lights[:16]
+
+    def stalled(start):
+        reply = board._reply()
+        reply[3], reply[6] = 21, 6      # claims 21 records, returns none
+        return reply
+
+    board._controls_page = stalled
+    caps.refresh(device)
+    assert len(caps.lights) == 16
+    assert caps.controls == []
+
+
 @pytest.mark.parametrize('colour_format, chain, host', [
     (0, False, False),   # GRB
     (1, False, False),   # RGB
@@ -204,10 +317,18 @@ def test_the_startup_line_names_the_version_and_what_it_buys():
     assert 'outcome mask' not in oldest
 
 
+def test_the_startup_line_names_the_control_table_from_v1_4():
+    """Test that the control table is named where it was read, and not before v1.4."""
+    assert hlp.negotiate(m_ultra().open()).summary() == (
+        "board speaks HLP v1.4 - light table, control table, per-light staging, "
+        "outcome mask, renders at 40 Hz (white channel: no)")
+    assert 'control table' not in hlp.negotiate(m_ultra(version=(1, 3)).open()).summary()
+
+
 def test_the_startup_line_says_when_a_newer_board_is_being_clamped():
-    """Test that a clamped board says so, rather than silently claiming to be v1.3."""
-    assert 'driven as v1.3' in negotiated(version=(1, 7)).summary()
-    assert 'driven as' not in negotiated(version=(1, 3)).summary()
+    """Test that a clamped board says so, rather than silently claiming to be v1.4."""
+    assert 'driven as v1.4' in negotiated(version=(1, 7)).summary()
+    assert 'driven as' not in negotiated(version=(1, 4)).summary()
 
 
 def test_the_startup_line_reports_the_white_channel():

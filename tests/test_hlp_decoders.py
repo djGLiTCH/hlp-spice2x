@@ -16,6 +16,8 @@ import pytest
 
 from hlp_spice2x import hlp
 
+from .fake_board import M_ULTRA_CONTROLS
+
 
 def caps_reply() -> bytearray:
     """Build an empty GET_CAPS reply with its command echo in place."""
@@ -73,6 +75,34 @@ def light_page(records, total=None, start=0, fingerprint=0, stride=12) -> bytes:
         reply[7 + n * stride:7 + n * stride + len(record)] = record
     reply[60:64] = fingerprint.to_bytes(4, 'little')
     return bytes(reply)
+
+
+def control_record(gpio_pin=2, gpio_action=1, button_id=0, flags=hlp.CONTROL_FLAG_LIT,
+                   width=6) -> bytes:
+    """Build one page 6 record, padded out to a wider stride on request."""
+    record = (bytes([gpio_pin]) + gpio_action.to_bytes(2, 'little', signed=True)
+              + bytes([button_id, flags, 0]))
+    return record + bytes(width - len(record))
+
+
+def control_page(records, total=None, start=0, fingerprint=0, stride=6, lit=0, unlit=0) -> bytes:
+    """Build a GET_CAPS page 6 reply carrying the given records."""
+    reply = caps_reply()
+    reply[3] = len(records) if total is None else total
+    reply[4], reply[5], reply[6] = start, len(records), stride
+    reply[7], reply[8], reply[9] = lit, unlit, 1
+    for n, record in enumerate(records):
+        reply[10 + n * stride:10 + n * stride + len(record)] = record
+    reply[60:64] = fingerprint.to_bytes(4, 'little')
+    return bytes(reply)
+
+
+def m_ultra_control_pages(fingerprint=0x15C2496E) -> list:
+    """Build the reference board's page 6 as the three replies a walk reads."""
+    records = [control_record(gpio_pin=pin, gpio_action=action, button_id=button_id)
+               for pin, action, button_id in M_ULTRA_CONTROLS]
+    return [control_page(records[start:start + 8], total=21, start=start, fingerprint=fingerprint)
+            for start in (0, 8, 16)]
 
 
 def stage_reply(command=hlp.CMD_SET_LIGHT, applied=0, skipped=0, mask=0) -> bytes:
@@ -144,7 +174,7 @@ def test_a_truncated_page_is_reported_not_indexed_past():
     decoder, which no caller in the bridge is positioned to catch.
     """
     for decoder, page in ((hlp.decode_state, 'page 1'), (hlp.decode_led_map, 'page 2'),
-                          (hlp.decode_lights, 'page 5')):
+                          (hlp.decode_lights, 'page 5'), (hlp.decode_controls, 'page 6')):
         with pytest.raises(hlp.HostLightingError, match=page):
             decoder(bytes(8))
 
@@ -275,6 +305,81 @@ def test_read_lights_gives_up_if_the_table_never_settles():
         device.read_lights(retries=0)
 
 
+def test_page_6_decodes_a_record_field_by_field():
+    """Test the record layout, the signed action, and the no-button-ID sentinel."""
+    page = hlp.decode_controls(control_page(
+        [control_record(gpio_pin=14, gpio_action=32, button_id=hlp.BUTTON_NONE, flags=0),
+         control_record(gpio_pin=22, gpio_action=-2, button_id=hlp.BUTTON_NONE, flags=0),
+         control_record(gpio_pin=27, gpio_action=1, button_id=0)],
+        total=21, start=8, lit=16, unlit=5, fingerprint=0x15C2496E))
+    assert page['records'][0] == {'ordinal': 8, 'gpio_pin': 14, 'gpio_action': 32,
+                                  'button_id': hlp.BUTTON_NONE, 'lit': False}
+    assert page['records'][1]['gpio_action'] == -2
+    assert page['records'][2] == {'ordinal': 10, 'gpio_pin': 27, 'gpio_action': 1,
+                                  'button_id': 0, 'lit': True}
+    assert (page['total'], page['start'], page['lit'], page['unlit']) == (21, 8, 16, 5)
+    assert page['fingerprint'] == 0x15C2496E
+
+
+def test_page_6_takes_its_stride_from_the_wire():
+    """Test that a wider page 6 record than this decoder knows does not misalign it."""
+    records = [control_record(gpio_pin=2, button_id=0, width=8),
+               control_record(gpio_pin=3, button_id=1, width=8)]
+    page = hlp.decode_controls(control_page(records, stride=8))
+    assert page['stride'] == 8
+    assert [record['gpio_pin'] for record in page['records']] == [2, 3]
+    assert [record['button_id'] for record in page['records']] == [0, 1]
+
+
+def test_a_page_6_reply_short_of_its_fingerprint_is_refused():
+    """Test that a reply long enough for its records but not its tail is not read as fingerprint 0."""
+    with pytest.raises(hlp.HostLightingError, match='page 6'):
+        hlp.decode_controls(control_page([], fingerprint=7)[:40])
+
+
+def test_a_page_6_stride_narrower_than_the_record_is_refused():
+    """Test that a page 6 stride below six bytes is an error rather than a short read."""
+    with pytest.raises(hlp.HostLightingError, match='stride'):
+        hlp.decode_controls(control_page([control_record()], stride=5))
+
+
+def test_read_controls_walks_the_reference_board_in_three_reads():
+    """Test that 21 records come back whole over reads of 8, 8 and 5."""
+    device = ScriptedDevice(m_ultra_control_pages())
+    records, fingerprint = device.read_controls()
+    assert [(record['gpio_pin'], record['gpio_action'], record['button_id'])
+            for record in records] == M_ULTRA_CONTROLS
+    assert fingerprint == 0x15C2496E
+    assert [payload for _, payload in device.requests] == [bytes([6, 0]), bytes([6, 8]),
+                                                           bytes([6, 16])]
+
+
+def test_read_controls_refuses_a_walk_that_stops_short():
+    """Test that a control table that stops mid-walk is an error, not a truncated table."""
+    device = ScriptedDevice([m_ultra_control_pages()[0],
+                             control_page([], total=21, start=8, fingerprint=0x15C2496E)])
+    with pytest.raises(hlp.HostLightingError, match='control table stalled at 8 of 21'):
+        device.read_controls()
+
+
+def test_read_controls_discards_a_walk_the_table_moved_under():
+    """Test that a control table changing mid-walk restarts the walk."""
+    stale, fresh = m_ultra_control_pages(fingerprint=1), m_ultra_control_pages(fingerprint=2)
+    device = ScriptedDevice([stale[0], fresh[1]] + fresh)
+    records, fingerprint = device.read_controls()
+    assert len(records) == 21
+    assert fingerprint == 2
+    assert [payload[1] for _, payload in device.requests] == [0, 8, 0, 8, 16]
+
+
+def test_read_controls_gives_up_if_the_table_never_settles():
+    """Test that an endlessly changing control table is reported rather than retried forever."""
+    device = ScriptedDevice([m_ultra_control_pages(fingerprint=1)[0],
+                             m_ultra_control_pages(fingerprint=2)[1]])
+    with pytest.raises(hlp.HostLightingError, match='control table kept changing'):
+        device.read_controls(retries=0)
+
+
 def test_set_lights_chunks_at_the_report_capacity():
     """Test that more entries than one report holds are sent as further reports."""
     device = ScriptedDevice([stage_reply(applied=15), stage_reply(applied=3)])
@@ -339,16 +444,18 @@ def test_an_entry_of_the_wrong_width_is_refused_before_anything_is_sent():
 
 
 def test_only_the_paged_pages_carry_a_start_entry():
-    """Test that the paged request form is used for pages 4 and 5 alone.
+    """Test that the paged request form is used for pages 4, 5 and 6 alone.
 
     Sending the wider payload to an unpaged page risks an INVALID_ARG from
     firmware that reads the extra byte, for no gain.
     """
-    device = ScriptedDevice([caps_reply(), caps_reply()])
+    device = ScriptedDevice([caps_reply(), caps_reply(), caps_reply()])
     device.get_caps_page(hlp.CAPS_PAGE_STATE)
     device.get_caps_page(hlp.CAPS_PAGE_LIGHTS, 8)
+    device.get_caps_page(hlp.CAPS_PAGE_CONTROLS, 16)
     assert device.requests == [(hlp.CMD_GET_CAPS, bytes([hlp.CAPS_PAGE_STATE])),
-                               (hlp.CMD_GET_CAPS, bytes([hlp.CAPS_PAGE_LIGHTS, 8]))]
+                               (hlp.CMD_GET_CAPS, bytes([hlp.CAPS_PAGE_LIGHTS, 8])),
+                               (hlp.CMD_GET_CAPS, bytes([hlp.CAPS_PAGE_CONTROLS, 16]))]
 
 
 @pytest.mark.parametrize('colour, expected', [

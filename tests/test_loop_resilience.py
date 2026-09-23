@@ -161,7 +161,7 @@ def test_a_truncated_probe_reply_is_no_more_evidence_than_a_missing_one():
 
     original = board._stage_buttons
     board._stage_buttons = lambda payload: bytearray(original(payload)[:4])
-    unmapped, unreachable = bridge.validate_targets(device, PROFILE, caps)
+    unmapped, unreachable, _ = bridge.validate_targets(device, PROFILE, caps)
     assert unmapped == []
     assert unreachable == []
 

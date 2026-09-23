@@ -8,10 +8,11 @@ Hardware and firmware are described separately, because they are separate. A
 board wires the lights it wires whatever firmware it runs, so `lights` describes
 the hardware and `version` decides how much of it the firmware will admit to:
 page 5 does not exist before v1.1, the extended controls do not stage before
-v1.2, SET_LIGHT_RGBW does not exist before v1.3, and the per-entry outcome mask
-reads as all-zeroes on anything older than v1.3. That last one is the trap worth
-being able to reproduce: zeroes mean "every entry was skipped" to a host that
-reads them without checking the version first.
+v1.2, SET_LIGHT_RGBW does not exist before v1.3, page 6 does not exist before
+v1.4, and the per-entry outcome mask reads as all-zeroes on anything older than
+v1.3. That last one is the trap worth being able to reproduce: zeroes mean
+"every entry was skipped" to a host that reads them without checking the version
+first.
 
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
@@ -26,6 +27,14 @@ from hlp_spice2x import hlp
 M_ULTRA_LIGHTS = [(2, 0), (1, 1), (3, 2), (0, 3), (6, 4), (7, 5), (9, 6), (8, 7),
                   (4, 8), (5, 9), (11, 10), (10, 11), (0, 12), (14, 13), (15, 14),
                   (14, 15)] + [(29, led) for led in range(16, 46)]
+
+# The same board's page 6 at its default profile, as (GPIO pin, action, button
+# ID): 21 pins, Up on GP2 and GP27, L3 on GP18 and GP26, turbo on GP14 with no
+# button ID, and S1, S2, A1 and A2 wired but unlit.
+M_ULTRA_CONTROLS = [(2, 1, 0), (3, 2, 1), (4, 4, 3), (5, 3, 2), (6, 5, 4), (7, 6, 5),
+                    (8, 12, 11), (9, 11, 10), (10, 7, 6), (11, 8, 7), (12, 10, 9),
+                    (13, 9, 8), (14, 32, 0xFF), (16, 13, 12), (17, 14, 13), (18, 17, 14),
+                    (19, 18, 15), (20, 15, 16), (21, 16, 17), (26, 17, 14), (27, 1, 0)]
 
 # A board with one light per control and no duplicates, for tests that only care
 # about the protocol version rather than about the shape of the hardware.
@@ -59,7 +68,7 @@ class FakeBoard:
                  colour_format=0, render_hz=40, light_table_feature=True, led_extent=None,
                  label='Fake Board', firmware='v0.0.0-fake',
                  board_id='0011223344556677', fingerprint=1, magic=b'GPHL',
-                 drop=(), reject=()):
+                 drop=(), reject=(), controls=None, control_table_feature=True):
         """Describe the board and the firmware it is running.
 
         :param version: the (major, minor) the board reports from PING
@@ -75,11 +84,15 @@ class FakeBoard:
         :param label: the board label reported on page 0
         :param firmware: the firmware version reported on page 0
         :param board_id: the factory board ID as hex, reported on page 0
-        :param fingerprint: the LED-map fingerprint reported on pages 1, 2 and 5
+        :param fingerprint: the LED-map fingerprint reported on pages 1, 2, 5 and 6
         :param magic: the PING magic, for standing in as something that is not
             a Host Lighting interface at all
         :param drop: commands to leave unanswered, as a flaky link would
         :param reject: commands to answer with a non-OK status
+        :param controls: the board's pins as (GPIO pin, action, button ID),
+            defaulting to one pin per control that owns a light
+        :param control_table_feature: whether page 1 claims the control-table
+            feature bit; a board that says no returns an empty page 6
         """
         self.version = tuple(version)
         self.lights = [tuple(light) + (1,) * (3 - len(light)) for light in lights]
@@ -93,6 +106,12 @@ class FakeBoard:
         self.board_id = board_id
         self.fingerprint = fingerprint
         self.magic = magic
+        if controls is None:
+            # actions are placeholders: nothing reads them
+            owners = sorted({light[0] for light in self.lights if light[0] in hlp.ONE_LAMP_CONTROLS})
+            controls = [(2 + n, button_id + 1, button_id) for n, button_id in enumerate(owners)]
+        self.controls = [tuple(control) for control in controls]
+        self.control_table_feature = control_table_feature
         # mutable so a test can start dropping or rejecting mid-run
         self.drop = set(drop)
         self.reject = set(reject)
@@ -203,6 +222,8 @@ class FakeBoard:
                 features = hlp.FEATURE_POSITIONS
                 if self.light_table_feature:
                     features |= hlp.FEATURE_LIGHT_TABLE
+                if self.minor >= 4 and self.control_table_feature:
+                    features |= hlp.FEATURE_CONTROL_TABLE
                 reply[12:16] = features.to_bytes(4, 'little')
                 reply[16], reply[17], reply[18] = 2, 2, self.render_hz
             return reply
@@ -221,8 +242,34 @@ class FakeBoard:
             return reply
         if page == hlp.CAPS_PAGE_LIGHTS:
             return self._lights_page(start)
+        if page == hlp.CAPS_PAGE_CONTROLS:
+            return self._controls_page(start)
         # pages 3 and 4 are real but nothing here reads them
         return self._reply(status=2)
+
+    def _controls_page(self, start):
+        """Build one page of the control table, or refuse it the way pre-v1.4 firmware does.
+
+        The lit bit comes from whether any light has the record's button ID,
+        because this fake's lights carry no pins.
+        """
+        if self.minor < 4:
+            return self._reply(status=2)
+        reply = self._reply()
+        stride, per_page = 6, 8
+        controls = self.controls if self.control_table_feature else []
+        lit = [self._has_light(button_id) for _, _, button_id in controls]
+        chunk = controls[start:start + per_page]
+        reply[3], reply[4], reply[5], reply[6] = len(controls), start, len(chunk), stride
+        reply[7], reply[8], reply[9] = sum(lit), len(controls) - sum(lit), 1
+        for n, (pin, action, button_id) in enumerate(chunk):
+            base = 10 + n * stride
+            reply[base] = pin
+            reply[base + 1:base + 3] = action.to_bytes(2, 'little', signed=True)
+            reply[base + 3] = button_id
+            reply[base + 4] = hlp.CONTROL_FLAG_LIT if lit[start + n] else 0
+        reply[60:64] = self.fingerprint.to_bytes(4, 'little')
+        return reply
 
     def _lights_page(self, start):
         """Build one page of the light table, or refuse it the way old firmware does."""

@@ -26,6 +26,9 @@ What the pages mean, in the order they are printed:
   naming the control that owns each. This is the page that can say a control
   owns more than one light, and the one whose ordinals per-light staging
   addresses.
+* Page 6 is the control table, added by v1.4: one record per GPIO pin carrying
+  an action, lit or not, keyed by pin. A control it leaves out does not exist
+  on the board. Its lit bits lag the light registry; page 5 decides what is lit.
 
 Two things on page 5 are worth understanding before trusting it. A record marked
 synthesised was rebuilt from the board's per-control configuration rather than
@@ -62,6 +65,8 @@ def describe_state(state) -> None:
     print(f"      light table       {bool(state['features'] & hlp.FEATURE_LIGHT_TABLE)} "
           f"(clear is a promise page 5 returns nothing)")
     print(f"      positions         {bool(state['features'] & hlp.FEATURE_POSITIONS)}")
+    print(f"      control table     {bool(state['features'] & hlp.FEATURE_CONTROL_TABLE)} "
+          f"(v1.4, set from boot)")
     print(f"   LED framework        {state['framework']} "
           f"(diagnostic only - branch on the feature bits, never on this)")
     print(f"   animation namespace  {state['animation_namespace']}")
@@ -114,6 +119,22 @@ def describe_lights(records) -> None:
         print(f"   {hlp.control_name(button_id):8} ({button_id:3}) x{len(rows):<3} {marks}{note}")
 
 
+def describe_controls(records) -> None:
+    """Print the control table one pin per line, marking duplicated controls."""
+    lit = sum(1 for record in records if record['lit'])
+    print(f"\npage 6, control table: {len(records)} record(s), {lit} lit, {len(records) - lit} unlit")
+    print("   lit bits lag the light registry; page 5 decides what is lit")
+    counts = {}
+    for record in records:
+        counts[record['button_id']] = counts.get(record['button_id'], 0) + 1
+    for record in records:
+        button_id = record['button_id']
+        name = 'none' if button_id == hlp.BUTTON_NONE else hlp.control_name(button_id)
+        duplicate = ' (duplicate)' if button_id != hlp.BUTTON_NONE and counts[button_id] > 1 else ''
+        print(f"   GP{record['gpio_pin']:<3} action {record['gpio_action']:<4} {name:8} "
+              f"{'lit' if record['lit'] else 'unlit'}{duplicate}")
+
+
 def main(argv=None) -> int:
     """Open a board, print what it reports, and leave its lighting alone.
 
@@ -147,6 +168,14 @@ def main(argv=None) -> int:
         else:
             describe_lights(records)
             print(f"   light table fingerprint {fingerprint}")
+
+        try:
+            records, fingerprint = device.read_controls()
+        except hlp.HostLightingRejected:
+            print("\npage 6, control table: not supported by this firmware (pre-v1.4)")
+        else:
+            describe_controls(records)
+            print(f"   control table fingerprint {fingerprint}")
 
         # what a host would decide from all of the above
         caps = hlp.negotiate(device)

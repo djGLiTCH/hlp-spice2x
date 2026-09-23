@@ -13,9 +13,14 @@ import pytest
 
 from hlp_spice2x import bridge, hlp, profile as profile_module
 
-from .fake_board import M_ULTRA_LIGHTS, FakeBoard, OneShotConnection
+from .fake_board import M_ULTRA_CONTROLS, M_ULTRA_LIGHTS, FakeBoard, OneShotConnection
 
 RED = (255, 0, 0)
+
+# E1 is not wired on the reference board, S1 and A1 are wired but unlit, TURBO
+# has no light, CASE and Up have lights
+CHECKED_PROFILE = {name: (('button', button_id), RED) for name, button_id in
+                   (('e1', 30), ('s1', 12), ('a1', 16), ('turbo', 28), ('case', 29), ('up', 0))}
 
 
 def connected(**kwargs):
@@ -175,7 +180,7 @@ def test_target_discovery_reads_the_table_instead_of_writing_to_the_board():
     board that publishes one the probe is pure cost.
     """
     device, caps, board = connected(version=(1, 1), lights=M_ULTRA_LIGHTS)
-    unmapped, unreachable = bridge.validate_targets(
+    unmapped, unreachable, _ = bridge.validate_targets(
         device, {'a': (('button', 0), RED), 'b': (('button', 29), RED)}, caps)
     assert unmapped == []
     assert unreachable == []
@@ -185,14 +190,14 @@ def test_target_discovery_reads_the_table_instead_of_writing_to_the_board():
 def test_a_control_the_table_does_not_name_is_reported():
     """Test that a control with no light on this board is still caught without probing."""
     device, caps, _ = connected(version=(1, 1), lights=[(0, 0)])
-    unmapped, _ = bridge.validate_targets(device, {'a': (('button', 5), RED)}, caps)
+    unmapped, _, _ = bridge.validate_targets(device, {'a': (('button', 5), RED)}, caps)
     assert unmapped == ['B2']
 
 
 def test_a_board_with_no_light_table_is_still_probed():
     """Test that v1.0 keeps the write-probe, which is the only thing it can do."""
     device, caps, board = connected(version=(1, 0), lights=[(0, 0)])
-    unmapped, _ = bridge.validate_targets(
+    unmapped, _, _ = bridge.validate_targets(
         device, {'a': (('button', 0), RED), 'b': (('button', 5), RED)}, caps)
     assert unmapped == ['B2']
     assert hlp.CMD_SET_BUTTONS in [command for command, _ in board.requests]
@@ -205,7 +210,7 @@ def test_an_unreachable_control_is_not_reported_as_missing_hardware():
     the user hunting a hardware fault that does not exist.
     """
     device, caps, _ = connected(version=(1, 0), lights=[(0, 0), (30, 1)])
-    unmapped, unreachable = bridge.validate_targets(device, {'a': (('button', 30), RED)}, caps)
+    unmapped, unreachable, _ = bridge.validate_targets(device, {'a': (('button', 30), RED)}, caps)
     assert unmapped == []
     assert unreachable == ['E1']
 
@@ -220,8 +225,67 @@ def test_a_probe_that_goes_unanswered_does_not_end_the_run():
     device, caps, board = connected(version=(1, 0), lights=[(0, 0)])
     board.pending.clear()
     board.write = lambda data: len(data)   # answers nothing from here on
-    unmapped, _ = bridge.validate_targets(device, {'a': (('button', 0), RED)}, caps)
+    unmapped, _, _ = bridge.validate_targets(device, {'a': (('button', 0), RED)}, caps)
     assert unmapped == []
+
+
+def test_the_control_table_tells_a_missing_control_from_an_unlit_one():
+    """Test that page 6 splits the unlit controls, and TURBO and CASE stay on page 5's check."""
+    device, caps, _ = connected(version=(1, 4), lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS)
+    unmapped, unreachable, absent = bridge.validate_targets(device, CHECKED_PROFILE, caps)
+    assert absent == ['E1']
+    assert unmapped == ['S1', 'A1', 'TURBO']
+    assert unreachable == []
+
+
+def test_without_a_control_table_the_profile_check_is_unchanged():
+    """Test that the same profile on the same hardware at v1.3 reports as it always did."""
+    device, caps, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS)
+    unmapped, unreachable, absent = bridge.validate_targets(device, CHECKED_PROFILE, caps)
+    assert absent == []
+    assert unmapped == ['S1', 'A1', 'TURBO', 'E1']
+    assert unreachable == []
+
+
+def test_a_control_table_that_could_not_be_read_gives_the_v1_3_check():
+    """Test that a v1.4 board whose page 6 failed makes no absence claims at all."""
+    board = FakeBoard(version=(1, 4), lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS)
+    board._controls_page = lambda start: board._reply(status=2)
+    device = board.open()
+    caps = hlp.negotiate(device)
+    assert caps.control_table is True
+    unmapped, _, absent = bridge.validate_targets(device, CHECKED_PROFILE, caps)
+    assert absent == []
+    assert unmapped == ['S1', 'A1', 'TURBO', 'E1']
+
+
+def test_a_control_that_will_light_is_never_reported_absent():
+    """Test that only unlit controls are checked against page 6."""
+    controls = [control for control in M_ULTRA_CONTROLS if control[2] != 0]   # no Up pin
+    device, caps, _ = connected(version=(1, 4), lights=M_ULTRA_LIGHTS, controls=controls)
+    unmapped, _, absent = bridge.validate_targets(device, {'up': (('button', 0), RED)}, caps)
+    assert unmapped == []
+    assert absent == []
+
+
+def test_a_board_still_in_led_setup_is_probed_and_the_result_split():
+    """Test the early-connect case: control-table bit set from boot, light-table bit not yet."""
+    device, caps, board = connected(version=(1, 4), lights=M_ULTRA_LIGHTS,
+                                    controls=M_ULTRA_CONTROLS, light_table_feature=False)
+    unmapped, _, absent = bridge.validate_targets(device, CHECKED_PROFILE, caps)
+    assert hlp.CMD_SET_BUTTONS in [command for command, _ in board.requests]
+    assert absent == ['E1']
+    assert unmapped == ['S1', 'A1', 'TURBO']
+
+
+def test_a_run_names_the_controls_the_board_does_not_have():
+    """Test that the new warning reaches the run's output beside the existing one."""
+    lines = []
+    bridge.run(OneShotConnection(), CHECKED_PROFILE,
+               device=FakeBoard(version=(1, 4), lights=M_ULTRA_LIGHTS,
+                                controls=M_ULTRA_CONTROLS).open(), report=lines.append)
+    assert 'warning: 1 mapped control(s) are not on this board: E1' in lines
+    assert 'warning: 3 mapped control(s) have no LED on this board: S1, A1, TURBO' in lines
 
 
 @pytest.mark.parametrize('render_hz, expected, why', [

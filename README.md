@@ -30,7 +30,7 @@ This bridge doubles as a real-world example of implementing Host Lighting
 Protocol support in a host application, for anyone adding HLP to their own
 tooling for GP2040-CE based controllers. It is a working tool first, but it was
 built against the whole protocol rather than the parts one program happens to
-need, and it drives every shipped version - v1.0 through v1.3 - from one code
+need, and it drives every shipped version - v1.0 through v1.4 - from one code
 path, deciding what a board can do by asking it.
 
 The parts worth reading, in the order a host has to do them:
@@ -42,17 +42,17 @@ The parts worth reading, in the order a host has to do them:
 | `hlp.HostLightingCapabilities` | Turning a version and a feature bitmask into questions a call site can ask, so a later protocol version is one new field here rather than a hunt for version comparisons |
 | `bridge.staging_for` | Choosing how each target reaches the board's lights, and what it falls back to when the newest command is not available |
 | `bridge.send_frame` | The staging passes, and why the order they are emitted in is load-bearing |
-| `tests/fake_board.py` | A board fake parameterised by protocol version, which gates its own replies the way firmware does, so every version can be tested without four boards |
+| `tests/fake_board.py` | A board fake parameterised by protocol version, which gates its own replies the way firmware does, so every version can be tested without five boards |
 
 Four things the protocol rewards, learned building this:
 
 - **Negotiate once, at connect, and freeze the result.** Re-deriving what a board
   can do inside a streaming loop spends round trips on an answer that cannot have
   changed without the board saying so.
-- **Branch on capabilities, not on version numbers.** Two of the capabilities
-  here deliberately do not follow from the version: the light table needs a
-  feature bit as well, and a host-supplied white component needs the LED chain to
-  have somewhere to put it.
+- **Branch on capabilities, not on version numbers.** Three of the capabilities
+  here deliberately do not follow from the version: the light and control tables
+  need a feature bit as well, and a host-supplied white component needs the LED
+  chain to have somewhere to put it.
 - **Give every capability a fallback.** The same profile has to work on a v1.0
   board, just with less finesse.
 - **Clamp a newer minor version rather than refusing it.** Within a major version
@@ -108,6 +108,7 @@ command line work on any of them. What differs is how much finesse is available.
 | v1.1 | the light table, the reported render rate | Reads which controls have lights instead of probing for them, streams at the board's own rate, and lights **every** light of a control that has more than one. |
 | v1.2 | colouring a single light by its ordinal | The `index` profile entry. Extended controls (`A3`, `A4`, `E1`-`E12`) stage by name. |
 | v1.3 | a per-entry outcome mask, and the RGBW form of per-light staging | Notices when the board skipped a light and re-reads its map, and honours a white component in a profile colour. |
+| v1.4 | the control table: every control the board has, lit or not | Tells a mapped control the board does not have apart from one it has with no LED, in the startup warnings. |
 
 A board reporting a **newer minor version** than this bridge knows is driven as
 the newest it does know, never refused: within a major version the protocol only
@@ -122,7 +123,7 @@ visible rather than guessed at:
 
 ```
 board: Haute42 COSMOX M Ultra (v0.7.12-354-gdf98847)
-board speaks HLP v1.3 - light table, per-light staging, outcome mask, renders at 40 Hz (white channel: no)
+board speaks HLP v1.4 - light table, control table, per-light staging, outcome mask, renders at 40 Hz (white channel: no)
 takeover: whole frame, 2000 ms keepalive, applying board brightness
 controls the board gives more than one light, all of which will be lit: L3, Up
 streaming at 40 fps (matching the board's render rate)
@@ -253,7 +254,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite covers all four protocol versions without needing a board, by running
+The suite covers all five protocol versions without needing a board, by running
 the real client against a fake that is parameterised by version and gates its own
 replies the way firmware does.
 

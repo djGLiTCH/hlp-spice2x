@@ -219,17 +219,34 @@ def validate_targets(device, profile, caps) -> tuple:
     Either way the caller clears the staging buffer afterwards, so this is free
     to dirty it.
 
+    A control table (v1.4) then splits the unlit controls: those it leaves out
+    are not on the board at all. Only unlit controls are split, so a control
+    that will light is never reported absent.
+
     :param device: an opened HostLightingDevice
     :param profile: a loaded profile
     :param caps: the negotiated capabilities
     :return: (controls the board has no LED for, controls this firmware is too
-        old to reach)
+        old to reach, controls the board does not have)
     """
     targets = sorted({target[1] for target, _ in profile.values() if target[0] == 'button'})
+    unlit, unreachable = unlit_targets(device, targets, caps)
+    absent = [button_id for button_id in unlit if caps.lacks_control(button_id)]
+    return ([hlp.control_name(button_id) for button_id in unlit if button_id not in absent],
+            unreachable, [hlp.control_name(button_id) for button_id in absent])
+
+
+def unlit_targets(device, targets, caps) -> tuple:
+    """Find the controls with no LED, from the light table or by probing.
+
+    :param device: an opened HostLightingDevice
+    :param targets: the button IDs the profile maps, sorted
+    :param caps: the negotiated capabilities
+    :return: (button IDs with no LED, names of controls this firmware is too old to reach)
+    """
     if caps.light_table:
         owned = {record['button_id'] for record in caps.lights}
-        return [hlp.control_name(button_id) for button_id in targets
-                if button_id not in owned], []
+        return [button_id for button_id in targets if button_id not in owned], []
 
     unmapped, unreachable = [], []
     for button_id in targets:
@@ -245,7 +262,7 @@ def validate_targets(device, profile, caps) -> tuple:
         if len(reply) < 5:
             continue  # nor is one too short to hold the count being read
         if reply[4]:  # [3] applied, [4] skipped
-            unmapped.append(hlp.control_name(button_id))
+            unmapped.append(button_id)
     return unmapped, unreachable
 
 
@@ -572,7 +589,10 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
             report(f"takeover: {'overlay' if overlay else 'whole frame'}, "
                    f"{timeout_ms} ms keepalive, "
                    f"{'ignoring' if full_brightness else 'applying'} board brightness")
-            unmapped, unreachable = validate_targets(device, profile, caps)
+            unmapped, unreachable, absent = validate_targets(device, profile, caps)
+            if absent:
+                report(f"warning: {len(absent)} mapped control(s) are not on this board: "
+                       f"{', '.join(absent)}")
             if unmapped:
                 report(f"warning: {len(unmapped)} mapped control(s) have no LED on this "
                        f"board: {', '.join(unmapped)}")
