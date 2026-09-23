@@ -102,6 +102,15 @@ class Sweep:
         self.failures.append(message)
         print(f"[{self.stamp()}]   FAIL {message}")
 
+    def take_over(self, mode) -> None:
+        """Send SET_MODE, then clear the staging buffer, as the bridge does at startup.
+
+        Staged pixels survive RELEASE and the end of a session; only CLEAR resets them.
+        """
+        self.device.request_ok(hlp.CMD_SET_MODE, mode)
+        self.device.request_ok(hlp.CMD_CLEAR)
+        self.last_frame = None
+
     def hold(self, frame, staging, seconds, verify=False) -> None:
         """Publish a frame and hold it, clearing whatever left the frame.
 
@@ -148,7 +157,7 @@ class Sweep:
             print(f"[{self.stamp()}] warning: {warning}")
 
         # whole-frame takeover, 10 s keepalive, honour the board's brightness
-        self.device.request_ok(hlp.CMD_SET_MODE, bytes([0, 0x10, 0x27, 1]))
+        self.take_over(bytes([0, 0x10, 0x27, 1]))
 
         self.phase(1, "every control in turn",
                    "each control lit white on its own, in the board's own order")
@@ -245,8 +254,7 @@ class Sweep:
                    f"{', '.join(hlp.control_name(b) for b in overlay)} white on top")
         self.device.request_ok(hlp.CMD_RELEASE)
         time.sleep(1)   # let the board's animation resume, so it is visibly underneath
-        self.device.request_ok(hlp.CMD_SET_MODE, bytes([1, 0x10, 0x27, 1]))
-        self.last_frame = None
+        self.take_over(bytes([1, 0x10, 0x27, 1]))
         self.hold({('button', button_id): WHITE for button_id in overlay}, staging, 8)
 
         self.phase(11, "keepalive, then release",
@@ -255,10 +263,9 @@ class Sweep:
         self.device.request_ok(hlp.CMD_RELEASE)
         time.sleep(0.5)
         # a deliberately short keepalive, so holding for 8s proves it is being fed
-        self.device.request_ok(hlp.CMD_SET_MODE, bytes([0, 0xD0, 0x07, 1]))
+        self.take_over(bytes([0, 0xD0, 0x07, 1]))
         steady = self.singles[0] if self.singles else self.controls[0]
         self.note(f"keepalive timeout 2000 ms; holding {hlp.control_name(steady)} amber for 8s")
-        self.last_frame = None
         self.hold({('button', steady): AMBER}, staging, 8)
 
 

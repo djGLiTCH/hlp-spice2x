@@ -130,6 +130,8 @@ def main(argv=None) -> int:
 
         # whole-frame takeover, 10 s keepalive, honour the board's brightness
         device.request_ok(hlp.CMD_SET_MODE, bytes([0, 0x10, 0x27, 1]))
+        # staged pixels survive the last session's RELEASE; only CLEAR resets them
+        device.request_ok(hlp.CMD_CLEAR)
 
         frame = hold(device, {('button', button_id): RED}, staging_control, None,
                      "STEP 1 of 4 - the control name alone",

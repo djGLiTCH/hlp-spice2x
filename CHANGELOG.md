@@ -27,6 +27,9 @@ changes.
 ### Fixed
 
 - `hlp_spice2x.__version__` still said 0.1.0 in 0.2.0.
+- `hardware_sweep` and `hardware_precedence` took the board over without
+  clearing its staging buffer, so a pixel staged by an earlier session or phase
+  stayed lit. They now clear on every takeover, as the bridge does.
 
 ## [0.2.0] - 2026-08-18
 
