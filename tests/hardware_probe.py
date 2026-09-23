@@ -29,6 +29,8 @@ What the pages mean, in the order they are printed:
 * Page 6 is the control table, added by v1.4: one record per GPIO pin carrying
   an action, lit or not, keyed by pin. A control it leaves out does not exist
   on the board. Its lit bits lag the light registry; page 5 decides what is lit.
+  It is checked against its own counts and against page 5's pins, and the
+  probe exits non-zero if either check fails.
 
 Two things on page 5 are worth understanding before trusting it. A record marked
 synthesised was rebuilt from the board's per-control configuration rather than
@@ -135,6 +137,36 @@ def describe_controls(records) -> None:
               f"{'lit' if record['lit'] else 'unlit'}{duplicate}")
 
 
+def check_control_table(header, controls, lights) -> list:
+    """Check page 6 against its own header and against page 5, as hlp-caps does.
+
+    The header counts come from the same walk as the records, and the lit pins
+    must be exactly the pins page 5 puts a button light on. A mismatch means one
+    of the two pages is wrong. The join is skipped while page 5 is empty, since
+    lit bits lag the light registry.
+
+    :param header: a decoded page 6 reply, carrying the board's lit and unlit counts
+    :param controls: every page 6 record
+    :param lights: every page 5 record
+    :return: (what was checked, whether it held) for each check made
+    """
+    lit = sum(1 for record in controls if record['lit'])
+    counted = (header['lit'] == lit
+               and header['lit'] + header['unlit'] == header['total'] == len(controls))
+    checks = [(f"{header['lit']} lit + {header['unlit']} unlit = {header['total']} records, "
+               f"{lit} of {len(controls)} marked lit", counted)]
+    if lights:
+        lit_pins = sorted({record['gpio_pin'] for record in controls if record['lit']})
+        # kind 0 is a button light; other kinds (case, turbo, player) have no pin here
+        light_pins = sorted({record['gpio_pin'] for record in lights
+                             if record['kind'] == 0 and record['gpio_pin'] is not None})
+        joined = lit_pins == light_pins
+        checks.append((f"lit pins match page 5's {len(light_pins)} button-light pins" if joined
+                       else f"lit pins {lit_pins} against page 5's button-light pins {light_pins}",
+                       joined))
+    return checks
+
+
 def main(argv=None) -> int:
     """Open a board, print what it reports, and leave its lighting alone.
 
@@ -161,28 +193,37 @@ def main(argv=None) -> int:
         # An unknown page is answered INVALID_ARG, which the protocol says to
         # read as "not supported by this firmware" rather than as a failure. It
         # is how a v1.0 board tells a host that page 5 does not exist yet.
+        lights = []
         try:
-            records, fingerprint = device.read_lights()
+            lights, fingerprint = device.read_lights()
         except hlp.HostLightingRejected:
             print("\npage 5, light table: not supported by this firmware (pre-v1.1)")
         else:
-            describe_lights(records)
+            describe_lights(lights)
             print(f"   light table fingerprint {fingerprint}")
 
+        coherent = True
         try:
-            records, fingerprint = device.read_controls()
+            controls, fingerprint = device.read_controls()
         except hlp.HostLightingRejected:
             print("\npage 6, control table: not supported by this firmware (pre-v1.4)")
         else:
-            describe_controls(records)
+            describe_controls(controls)
             print(f"   control table fingerprint {fingerprint}")
+            header = hlp.decode_controls(device.get_caps_page(hlp.CAPS_PAGE_CONTROLS, 0))
+            if header['fingerprint'] != fingerprint:
+                print("   checks skipped: the table changed while it was read; run again")
+            else:
+                for what, held in check_control_table(header, controls, lights):
+                    print(f"   check: {what}: {'coherent' if held else 'MISMATCH'}")
+                    coherent = coherent and held
 
         # what a host would decide from all of the above
         caps = hlp.negotiate(device)
         print(f"\nnegotiated: {caps.summary()}")
     finally:
         device.close()
-    return 0
+    return 0 if coherent else 1
 
 
 if __name__ == '__main__':

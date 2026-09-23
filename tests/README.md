@@ -28,7 +28,7 @@ never collects them, and importing one does nothing until you call it.
 
 | File | What it covers |
 |---|---|
-| `test_hlp_decoders.py` | The capability page decoders and the per-light staging commands, as pure functions over hand-built 64-byte replies. Hand-built on purpose: decoding a reply the fake board generated would test the fake as much as the decoder. |
+| `test_hlp_decoders.py` | The capability page decoders and the per-light staging commands, as pure functions over hand-built 64-byte replies. Hand-built on purpose: decoding a reply the fake board generated would test the fake as much as the decoder. Also the probe's control-table checks. |
 | `test_version_policy.py` | What the bridge agrees to at connect across v1.0 to v1.4, the clamping of an unknown minor, the refusal of an unknown major, and `--force`. Also that a page 6 read which fails costs neither the connect nor the light table. |
 | `test_staging.py` | How a frame reaches the board's lights: control names, the expansion to all of a control's lights, per-light targeting by index, raw ranges, the white channel, and the order the passes are emitted in. Also the startup check that names controls the board lacks or cannot light. |
 | `test_loop_resilience.py` | That a bad reply does not end a working run, and that a board going away still does. Covers the LED-map poll, the keepalive, the staging receipts read back from v1.3 firmware, and a receipt that arrives truncated rather than not at all. Also that startup clears the staging buffer, so a previous session's pixels are not inherited. |
@@ -102,6 +102,8 @@ Prints the protocol version, the board's identity, and every capability page
 decoded field by field: the light table grouped by the control that owns each
 light, with a note against any control that owns more than one, then from v1.4
 the control table, one pin per line, marking controls wired to more than one pin.
+It checks the control table against its own counts and against the light
+table's pins, as `hlp-caps` does, and exits non-zero if either check fails.
 
 Run this first against any board, and first whenever something further up is
 behaving strangely: almost every surprising behaviour traces back to something

@@ -17,7 +17,8 @@ changes.
   whenever the LED map changes. A mapped control the board does not have is now
   reported as not on this board, rather than as having no LED. Page 6 is
   advisory: if it cannot be read, the bridge behaves as it did at v1.3.
-- `hardware_probe` prints the control table.
+- `hardware_probe` prints the control table, checks it against its own counts
+  and against the light table's pins, and exits non-zero on a mismatch.
 - `--list-boards`, listing each attached board's factory ID, label, protocol
   version and firmware without taking any over.
 

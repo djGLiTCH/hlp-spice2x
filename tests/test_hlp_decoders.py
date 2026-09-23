@@ -17,6 +17,7 @@ import pytest
 from hlp_spice2x import hlp
 
 from .fake_board import M_ULTRA_CONTROLS
+from .hardware_probe import check_control_table
 
 
 def caps_reply() -> bytearray:
@@ -378,6 +379,62 @@ def test_read_controls_gives_up_if_the_table_never_settles():
                              m_ultra_control_pages(fingerprint=2)[1]])
     with pytest.raises(hlp.HostLightingError, match='control table kept changing'):
         device.read_controls(retries=0)
+
+
+def probe_inputs(lit_pins=(2, 3), light_pins=(2, 3), header=None):
+    """Build page 6 and page 5 records as the probe's cross-check receives them."""
+    controls = [{'gpio_pin': pin, 'lit': pin in lit_pins} for pin in (2, 3, 14)]
+    lights = [{'gpio_pin': pin, 'kind': 0} for pin in light_pins]
+    lights.append({'gpio_pin': None, 'kind': 1})      # a case light has no pin
+    lit = sum(1 for record in controls if record['lit'])
+    header = header or {'total': 3, 'lit': lit, 'unlit': 3 - lit}
+    return header, controls, lights
+
+
+def test_the_probe_finds_a_coherent_control_table_coherent():
+    """Test that counts which add up and lit pins matching page 5 both pass."""
+    assert [held for _, held in check_control_table(*probe_inputs())] == [True, True]
+
+
+def test_the_probe_catches_counts_that_disagree_with_the_records():
+    """Test that a header claiming a different lit count than the records is a mismatch."""
+    header, controls, lights = probe_inputs(header={'total': 3, 'lit': 3, 'unlit': 0})
+    assert [held for _, held in check_control_table(header, controls, lights)] == [False, True]
+
+
+def test_the_probe_catches_counts_that_do_not_add_up():
+    """Test that lit plus unlit falling short of the total is a mismatch."""
+    header, controls, lights = probe_inputs(header={'total': 3, 'lit': 2, 'unlit': 0})
+    assert check_control_table(header, controls, lights)[0][1] is False
+
+
+def test_the_probe_catches_a_total_the_walk_did_not_return():
+    """Test that a header total other than the number of records read is a mismatch."""
+    header, controls, lights = probe_inputs(header={'total': 4, 'lit': 2, 'unlit': 2})
+    assert check_control_table(header, controls, lights)[0][1] is False
+
+
+def test_the_probe_joins_only_button_lights():
+    """Test that a light of another kind naming a pin does not make that pin lit.
+
+    Page 6 marks a pin lit only for a button light, so the join has to match.
+    """
+    header, controls, lights = probe_inputs()
+    lights.append({'gpio_pin': 14, 'kind': 1})
+    assert check_control_table(header, controls, lights)[1][1] is True
+
+
+def test_the_probe_catches_a_lit_pin_page_5_has_no_light_on():
+    """Test that the join on pin fails when page 6 and page 5 disagree."""
+    checks = check_control_table(*probe_inputs(lit_pins=(2, 3, 14)))
+    assert checks[1][1] is False
+    assert '[2, 3, 14]' in checks[1][0]
+
+
+def test_the_probe_skips_the_join_while_page_5_is_empty():
+    """Test that an empty light table claims nothing about which pins are lit."""
+    header, controls, _ = probe_inputs()
+    assert len(check_control_table(header, controls, [])) == 1
 
 
 def test_set_lights_chunks_at_the_report_capacity():
