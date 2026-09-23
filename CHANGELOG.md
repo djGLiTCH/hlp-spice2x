@@ -22,7 +22,8 @@ changes.
 ### Changed
 
 - A board reporting v1.4 is driven as v1.4 rather than clamped to v1.3.
-- Firmware links point at the HLP v1.4 test builds.
+- Firmware links point at the HLP v1.4 test builds, and protocol links at the
+  v1.4 specification by tag rather than at a branch that moves.
 
 ### Fixed
 

@@ -61,7 +61,7 @@ Four things the protocol rewards, learned building this:
   that is better at everything they asked for.
 
 The protocol itself is specified in
-[docs/host-lighting.md](https://github.com/djGLiTCH/GP2040-CE/blob/20260811-host-lighting-protocol/docs/host-lighting.md).
+[docs/host-lighting.md](https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v1.4/docs/host-lighting.md).
 
 ## Requirements
 
@@ -94,7 +94,7 @@ against a fake:
 [v1.0](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.0)
 
 The protocol itself is documented in
-[docs/host-lighting.md](https://github.com/djGLiTCH/GP2040-CE/blob/20260811-host-lighting-protocol/docs/host-lighting.md).
+[docs/host-lighting.md](https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v1.4/docs/host-lighting.md).
 
 ## Protocol versions
 
