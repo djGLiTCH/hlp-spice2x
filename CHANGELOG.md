@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [0.3.0] - 2026-09-23
+
+Host Lighting Protocol v1.4 support. Additive: nothing that worked under 0.2.0
+changes.
+
+### Added
+
+- Protocol v1.4: the board's control table (page 6) is read at connect and
+  whenever the LED map changes. A mapped control the board does not have is now
+  reported as not on this board, rather than as having no LED. Page 6 is
+  advisory: if it cannot be read, the bridge behaves as it did at v1.3.
+- `hardware_probe` prints the control table.
+
+### Changed
+
+- A board reporting v1.4 is driven as v1.4 rather than clamped to v1.3.
+- Firmware links point at the HLP v1.4 test builds.
+
+### Fixed
+
+- `hlp_spice2x.__version__` still said 0.1.0 in 0.2.0.
+
 ## [0.2.0] - 2026-08-18
 
 Multi-version Host Lighting support: the bridge speaks v1.0 through v1.3, works
@@ -101,5 +123,6 @@ Host Lighting Protocol. Profiles name controls rather than LED indexes, so the
 firmware resolves them against each board's own LED map and one profile works
 across layouts.
 
+[0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.1.0
