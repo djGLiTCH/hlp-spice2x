@@ -221,13 +221,15 @@ control add together and clamp.
 | `--overlay` | Paint only the mapped controls and let everything else keep animating. Without it the whole frame is taken and unmapped LEDs go dark. |
 | `--full-brightness` | Ignore the board's configured brightness and render the colours the game asks for. |
 | `--fps N` | Poll rate. Defaults to the board's own render rate where it reports one slower than 60, and to 60 otherwise. Passing this overrides both. |
-| `--board-id PREFIX` | Pick one of several connected boards, by the prefix of its factory ID. |
+| `--list-boards` | List the attached boards - factory ID, label, protocol version and firmware - and exit. Takes no board over and needs no game. |
+| `--board-id PREFIX` | Pick one of several connected boards, by the prefix of its factory ID. `--list-boards` shows the IDs. |
 | `--dry-run` | Print frames instead of driving a board. Never opens the HID interface. |
 | `--timeout MS` | Takeover keepalive, default 2000 ms. The board restores its animations if it stops hearing from the host for this long. |
 | `--force` | Run against a protocol major version this bridge does not support. Unsupported and for testing only; commands may not mean what the bridge thinks they mean. |
 
 `--list-lights`, `--write-profile` and `--dry-run` talk to spice2x alone, so you
-can build and check a profile on the game PC with no board attached. A dry run
+can build and check a profile on the game PC with no board attached.
+`--list-boards` talks to the boards alone. A dry run
 has no light table to resolve an `index` entry against, so it shows those
 entries as the profile wrote them, such as `Up[1]`.
 

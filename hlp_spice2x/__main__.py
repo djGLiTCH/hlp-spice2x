@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="print the lights spice2x reports and exit")
     parser.add_argument("--write-profile", metavar="FILE",
                         help="write a skeleton profile from the running game and exit")
+    parser.add_argument("--list-boards", action="store_true",
+                        help="list the attached boards and exit, taking none of them over")
     parser.add_argument("--board-id", default="",
                         help="hex prefix of the board ID, to pick one of several")
     parser.add_argument("--fps", type=float,
@@ -59,6 +61,8 @@ def main(argv=None) -> int:
         parser.error("--timeout must be between 100 and 65535 ms")
 
     try:
+        if args.list_boards:
+            return list_boards()
         if args.list_lights or args.write_profile:
             return inspect(args)
         if not args.profile:
@@ -72,6 +76,23 @@ def main(argv=None) -> int:
         # hidapi, and guessing wrong sends the user looking in the wrong place
         print(f"error: {error}", file=sys.stderr)
         return 1
+
+
+def list_boards() -> int:
+    """Handle --list-boards, which needs no game and takes no board over."""
+    boards = hlp.describe_boards()
+    if not boards:
+        print(hlp.NO_INTERFACE, file=sys.stderr)
+        return 1
+    width = max(len(board['label']) for board in boards)
+    print(f"{len(boards)} board(s):")
+    for board in boards:
+        major, minor = board['version']
+        print(f"  {board['board_id']}  {board['label']:{width}}  HLP v{major}.{minor}  "
+              f"{board['firmware']}")
+    if len(boards) > 1:
+        print("pick one with --board-id and the start of its ID")
+    return 0
 
 
 def inspect(args) -> int:

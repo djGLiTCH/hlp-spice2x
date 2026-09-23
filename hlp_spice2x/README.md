@@ -11,11 +11,11 @@ spice2x  --(Spice API, TCP/JSON)-->  hlp-spice2x  --(HID)-->  GP2040-CE board
 
 | Module | Lines | What it is |
 |---|---|---|
-| `hlp.py` | 1190 | The protocol. Framing, capability pages, staging commands, and what each version of the protocol offers. Depends on nothing but `hidapi`. |
+| `hlp.py` | 1214 | The protocol. Framing, capability pages, staging commands, and what each version of the protocol offers. Depends on nothing but `hidapi`. |
 | `bridge.py` | 747 | The loop. Polls, resolves a frame, stages it, publishes it, and keeps the board's takeover alive. |
 | `profile.py` | 198 | Profiles. Turns a JSON file into targets and colours, and a set of light levels into a frame. |
 | `spiceapi.py` | 122 | The game side. A minimal Spice API client, including the RC4 the password option needs. |
-| `__main__.py` | 130 | The command line. Parses arguments, opens both ends, and hands them to the loop. |
+| `__main__.py` | 151 | The command line. Parses arguments, opens both ends, and hands them to the loop. |
 
 Dependencies run one way. `hlp.py` and `spiceapi.py` know nothing about anything
 else here, `profile.py` knows only `hlp.py`, and `bridge.py` knows both. Nothing

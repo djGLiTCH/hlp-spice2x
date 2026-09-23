@@ -35,7 +35,7 @@ never collects them, and importing one does nothing until you call it.
 | `test_profile.py` | Profile parsing and frame resolution. |
 | `test_cli.py` | Argument handling and the paths that exit before connecting to anything. |
 | `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection rather than per message, NUL framing across repeated calls, and a game that hangs up surfacing as a ConnectionError, which the bridge relies on to treat a closed game as a normal ending. |
-| `test_device_errors.py` | Telling a late reply apart from a device that has gone away. |
+| `test_device_errors.py` | Telling a late reply apart from a device that has gone away, and finding the right board when several are attached. |
 
 ## The fake board
 

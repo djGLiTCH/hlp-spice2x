@@ -18,10 +18,14 @@ changes.
   reported as not on this board, rather than as having no LED. Page 6 is
   advisory: if it cannot be read, the bridge behaves as it did at v1.3.
 - `hardware_probe` prints the control table.
+- `--list-boards`, listing each attached board's factory ID, label, protocol
+  version and firmware without taking any over.
 
 ### Changed
 
 - A board reporting v1.4 is driven as v1.4 rather than clamped to v1.3.
+- With several boards attached and no `--board-id`, the error names each
+  board by label as well as by ID.
 - Firmware links point at the HLP v1.4 test builds, and protocol links at the
   v1.4 specification by tag rather than at a branch that moves.
 

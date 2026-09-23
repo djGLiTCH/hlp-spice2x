@@ -41,6 +41,21 @@ M_ULTRA_CONTROLS = [(2, 1, 0), (3, 2, 1), (4, 4, 3), (5, 3, 2), (6, 5, 4), (7, 6
 PLAIN_LIGHTS = [(button_id, button_id) for button_id in range(16)]
 
 
+def attach(monkeypatch, *boards):
+    """Make device discovery find these fake boards, as enumerating hidapi would.
+
+    Patches find_devices and the HostLightingDevice constructor for one test,
+    so open_device and describe_boards run unchanged against the fakes.
+
+    :param monkeypatch: the test's pytest monkeypatch fixture
+    :param boards: the FakeBoards to present, in enumeration order
+    """
+    real = hlp.HostLightingDevice
+    paths = {f'fake-{n}'.encode(): board for n, board in enumerate(boards)}
+    monkeypatch.setattr(hlp, 'find_devices', lambda: [{'path': path} for path in paths])
+    monkeypatch.setattr(hlp, 'HostLightingDevice', lambda path: real.from_hid(paths[path]))
+
+
 class OneShotConnection:
     """A spice2x connection that answers one poll and then ends the run.
 

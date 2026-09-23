@@ -61,6 +61,10 @@ import time
 USAGE_PAGE = 0xFF47
 USAGE = 0x4C
 REPORT_SIZE = 64
+# said when no interface is found; the link names the newest firmware test builds
+NO_INTERFACE = ("no Host Lighting interface found - is a board connected with the add-on enabled? "
+                "The add-on is not in an official GP2040-CE release yet; test builds are at "
+                "https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.4")
 
 # The protocol freezes command IDs and existing payload layouts within a major
 # version: a minor version may only add, and only a major version may change
@@ -1164,27 +1168,47 @@ def open_device(board_id_prefix: str = '') -> HostLightingDevice:
     """
     infos = find_devices()
     if not infos:
-        raise HostLightingError(
-            "no Host Lighting interface found - is a board connected with the add-on enabled? "
-            "The add-on is not in an official GP2040-CE release yet; test builds are at "
-            "https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.4")
+        raise HostLightingError(NO_INTERFACE)
     candidates = []
     for info in infos:
         device = HostLightingDevice(info['path'])
         try:
-            board_id, _, _ = read_identity(device)
+            board_id, label, _ = read_identity(device)
         except HostLightingError:
             device.close()
             continue
         if board_id.startswith(board_id_prefix.upper()):
-            candidates.append((board_id, device))
+            candidates.append((board_id, label, device))
         else:
             device.close()
     if not candidates:
         raise HostLightingError(f"no board matches ID prefix '{board_id_prefix}'")
     if len(candidates) > 1:
-        ids = ', '.join(board_id for board_id, _ in candidates)
-        for _, device in candidates:
+        boards = ', '.join(f"{board_id} ({label})" for board_id, label, _ in candidates)
+        for _, _, device in candidates:
             device.close()
-        raise HostLightingError(f"multiple boards found ({ids}) - select one with --board-id")
-    return candidates[0][1]
+        raise HostLightingError(f"multiple boards found: {boards} - select one with --board-id")
+    return candidates[0][2]
+
+
+def describe_boards() -> list:
+    """Identify every attached board from PING and page 0, taking none of them over.
+
+    An interface that does not answer as a Host Lighting one is left out, as
+    open_device leaves it out.
+
+    :return: one dict per board: board_id, label, firmware, and version as (major, minor)
+    """
+    boards = []
+    for info in find_devices():
+        device = HostLightingDevice(info['path'])
+        try:
+            version = read_protocol_version(device)
+            board_id, label, firmware = read_identity(device)
+        except HostLightingError:
+            continue
+        finally:
+            device.close()
+        boards.append({'board_id': board_id, 'label': label, 'firmware': firmware,
+                       'version': version})
+    return boards

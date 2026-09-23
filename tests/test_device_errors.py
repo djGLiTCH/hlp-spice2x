@@ -11,6 +11,8 @@ import pytest
 
 from hlp_spice2x import bridge, hlp
 
+from .fake_board import FakeBoard, attach
+
 
 class FakeHid:
     """Stands in for the hidapi device object inside HostLightingDevice."""
@@ -118,3 +120,52 @@ def test_a_vanished_board_is_not_blamed_on_spice2x():
     text = ' '.join(lines)
     assert 'board disconnected' in text
     assert 'spice2x' not in text
+
+
+M_ULTRA = {'board_id': '433030343237362E', 'label': 'Haute42 COSMOX M Ultra'}
+B16 = {'board_id': '433031343539302E', 'label': 'Haute42 COSMOX'}
+
+
+def test_several_boards_are_named_by_id_and_label(monkeypatch):
+    """Test that the several-boards error says which board is which, and closes each."""
+    boards = [FakeBoard(**M_ULTRA), FakeBoard(**B16)]
+    attach(monkeypatch, *boards)
+    with pytest.raises(hlp.HostLightingError) as caught:
+        hlp.open_device()
+    message = str(caught.value)
+    assert '433030343237362E (Haute42 COSMOX M Ultra)' in message
+    assert '433031343539302E (Haute42 COSMOX)' in message
+    assert '--board-id' in message
+    assert all(board.closed for board in boards)
+
+
+def test_an_id_prefix_picks_one_of_several_boards(monkeypatch):
+    """Test that --board-id opens the matching board and closes the rest."""
+    boards = [FakeBoard(**M_ULTRA), FakeBoard(**B16)]
+    attach(monkeypatch, *boards)
+    device = hlp.open_device('4330313')
+    assert hlp.read_identity(device)[0] == B16['board_id']
+    assert boards[0].closed and not boards[1].closed
+
+
+def test_boards_are_described_without_being_taken_over(monkeypatch):
+    """Test that describe_boards reads PING and page 0 only, and closes every board."""
+    boards = [FakeBoard(version=(1, 4), firmware='v1.4-build', **M_ULTRA),
+              FakeBoard(version=(1, 3), firmware='v1.3-build', **B16)]
+    attach(monkeypatch, *boards)
+    assert hlp.describe_boards() == [
+        {'board_id': M_ULTRA['board_id'], 'label': M_ULTRA['label'], 'firmware': 'v1.4-build',
+         'version': (1, 4)},
+        {'board_id': B16['board_id'], 'label': B16['label'], 'firmware': 'v1.3-build',
+         'version': (1, 3)}]
+    assert all(board.closed for board in boards)
+    assert all({command for command, _ in board.requests} == {hlp.CMD_PING, hlp.CMD_GET_CAPS}
+               for board in boards)
+
+
+def test_an_interface_that_is_not_host_lighting_is_not_described(monkeypatch):
+    """Test that an interface failing the handshake is left out, and still closed."""
+    boards = [FakeBoard(magic=b'XXXX'), FakeBoard(**B16)]
+    attach(monkeypatch, *boards)
+    assert [board['board_id'] for board in hlp.describe_boards()] == [B16['board_id']]
+    assert all(board.closed for board in boards)

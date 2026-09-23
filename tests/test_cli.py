@@ -12,6 +12,7 @@ import pytest
 
 from hlp_spice2x.__main__ import main
 
+from .fake_board import FakeBoard, attach
 from .stub_server import StubServer
 
 
@@ -112,3 +113,28 @@ def test_dry_run_prints_frames_and_needs_no_board(server, tmp_path, capsys):
     assert main(['--port', str(stub.port), '--profile', path, '--dry-run', '--fps', '20']) == 0
     out = capsys.readouterr().out
     assert 'frame:' in out and 'B1=#FF0000' in out
+
+
+def test_list_boards_names_each_board_and_needs_no_game(monkeypatch, capsys):
+    """Test that --list-boards prints each board and exits without contacting spice2x."""
+    def no_game(*args):
+        raise AssertionError("--list-boards contacted spice2x")
+
+    monkeypatch.setattr('hlp_spice2x.__main__.SpiceConnection', no_game)
+    attach(monkeypatch,
+           FakeBoard(version=(1, 4), board_id='433030343237362E', label='Haute42 COSMOX M Ultra',
+                     firmware='v0.7.12'),
+           FakeBoard(version=(1, 4), board_id='433031343539302E', label='Haute42 COSMOX',
+                     firmware='v0.7.12'))
+    assert main(['--list-boards']) == 0
+    out = capsys.readouterr().out
+    assert '433030343237362E  Haute42 COSMOX M Ultra  HLP v1.4  v0.7.12' in out
+    assert '433031343539302E  Haute42 COSMOX          HLP v1.4  v0.7.12' in out
+    assert '--board-id' in out
+
+
+def test_list_boards_with_none_attached_points_at_the_firmware(monkeypatch, capsys):
+    """Test that an empty listing fails and says where to get firmware."""
+    attach(monkeypatch)
+    assert main(['--list-boards']) == 1
+    assert 'releases/tag/HLP_v1.4' in capsys.readouterr().err
