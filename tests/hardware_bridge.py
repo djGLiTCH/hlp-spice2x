@@ -1,33 +1,30 @@
 """Run the whole program against a board, with no game and no spice2x.
 
-Everything else here reaches into the bridge and drives a piece of it. This does
-not: it stands up a fake Spice API on a loopback port, writes a profile to disk,
-and invokes the command line entry point exactly as a shell would. Argument
-parsing, profile loading, device discovery, the handshake, the polling loop, the
-keepalive, the periodic LED-map check and the shutdown are all the real ones.
-
-It is the closest thing to running the bridge for real that does not need a
-cabinet, and it is the only check here that exercises them together rather than
-one at a time.
+The other checks drive one piece of the bridge. This one stands up a fake Spice
+API on a loopback port, writes a profile to disk, and invokes the command line
+entry point as a shell would. Argument parsing, profile loading, discovery, the
+handshake, the claim and its renewal, the polling loop, the watch on the
+board's state and the shutdown are all the real ones.
 
 The fake API animates its lights, so the board shows a travelling chase around
 its buttons and a wave through whatever strip it has. That makes two things
-visible that a static frame cannot:
+visible:
 
-* whether the loop keeps up. It reports the rate it achieved and how many
-  commits went unacknowledged, and a chase that stutters says more about the
-  loop than any number does.
-* whether anything survives between runs. Run it twice in a row and watch the
-  second run's first second: a light holding a colour from the previous run is
-  a pixel nobody staged, which means the staging buffer was not cleared at
-  startup.
+* Whether the loop keeps up. It reports the rate it achieved and how many
+  frames went unacknowledged.
+* Whether anything survives between runs. On a second run straight after the
+  first, a light holding a colour from the previous run in the first second
+  is a pixel that was not staged. Taking the claim clears the staged frame,
+  so there should be none.
+
+While it runs, another application can be tried against it. `hlp-fill` from
+gp2040ce-binary-tools stops and names hlp-spice2x as the holder, and with
+`--force` takes the lights over, which this run reports and then waits out.
 
 The profile it writes is generated from what the board reports, so it maps only
-controls that board actually has. It is written next to this file and left
-behind on purpose: it is the easiest way to see what a profile looks like for a
-board you have. It uses control names and per-light indexes; raw LED ranges are
-not generated, since which indexes are worth naming is a question about a
-layout rather than about a board.
+controls that board has. It is written next to this file and left there as an
+example of a profile for that board. It uses control names and per-light
+indexes. Raw LED ranges are not generated.
 
 Run it from the repository root:
 
@@ -46,6 +43,8 @@ import _thread
 
 from hlp_spice2x import hlp
 from hlp_spice2x.__main__ import main as cli_main
+
+from .hardware_lights import named_controls
 
 from .stub_server import StubServer
 
@@ -68,22 +67,19 @@ def describe_board(prefix):
     """Read what the board has, without taking its lighting over.
 
     :param prefix: board-ID prefix, or '' for the only board attached
-    :return: (chase control IDs, strip control ID or None, strip light count,
-              a control owning more than one light or None)
+    :return: (chase controls, strip control or None, strip light count,
+              a control with more than one light or None)
     """
     device = hlp.open_device(prefix)
     try:
         caps = hlp.negotiate(device)
-        controls = sorted({record['button_id'] for record in caps.lights})
-        chase = [button_id for button_id in controls if button_id in hlp.ONE_LAMP_CONTROLS]
-        # a strip is any control the board gives many lights and that is not
-        # meant to be one lamp: the case, typically
-        strips = [(button_id, len(caps.lights_owned_by(button_id))) for button_id in controls
-                  if button_id not in hlp.ONE_LAMP_CONTROLS
-                  and len(caps.lights_owned_by(button_id)) > 1]
+        controls = named_controls(caps)
+        chase = [control for control in controls if control[0] == hlp.ADDRESSING_ACTION]
+        # a strip is a kind of light the board has many of, typically the case
+        strips = [(control, len(caps.lights_of(control))) for control in controls
+                  if control[0] == hlp.ADDRESSING_KIND and len(caps.lights_of(control)) > 1]
         strip, strip_lights = strips[0] if strips else (None, 0)
-        multi = next((button_id for button_id in chase
-                      if len(caps.lights_owned_by(button_id)) > 1), None)
+        multi = next((control for control in chase if len(caps.lights_of(control)) > 1), None)
         return chase, strip, strip_lights, multi
     finally:
         device.close()
@@ -92,22 +88,22 @@ def describe_board(prefix):
 def build_profile(chase, strip, strip_lights, multi):
     """Write a profile naming this board's controls, and its strip light by light.
 
-    :param chase: control IDs to put in the travelling chase
-    :param strip: a control with many lights, addressed one light at a time
-    :param strip_lights: how many lights that control has
-    :param multi: a control owning more than one light, or None
+    :param chase: controls to put in the travelling chase
+    :param strip: a kind of light the board has many of, addressed one light at a time
+    :param strip_lights: how many lights of that kind it has
+    :param multi: a control with more than one light, or None
     :return: (the light names the fake API should report, the profile written)
     """
     lights, entries = [], {}
 
-    for index, button_id in enumerate(chase):
-        name = f"Chase {hlp.control_name(button_id)}"
-        entries[name] = {'button': hlp.control_name(button_id),
+    for index, control in enumerate(chase):
+        name = f"Chase {hlp.control_name(control)}"
+        entries[name] = {'button': hlp.control_name(control),
                          'colour': wheel(index, len(chase))}
         lights.append(name)
 
-    # every light of the strip addressed on its own, which is what shows it is a
-    # group of individually addressable lights rather than one lamp
+    # every light of the strip addressed on its own, which shows it is a group
+    # of individually addressable lights
     strip_names = []
     for index in range(strip_lights):
         name = f"Strip {index}"
@@ -116,7 +112,7 @@ def build_profile(chase, strip, strip_lights, multi):
         strip_names.append(name)
     lights.extend(strip_names)
 
-    # one entry picking a single light of a control that owns several, so the
+    # one entry picking a single light of a control that has several, so the
     # chase and this entry fight over the same control every frame
     if multi is not None:
         entries['Second light'] = {'button': hlp.control_name(multi), 'index': 1,
@@ -169,7 +165,7 @@ def main(argv=None) -> int:
         return 1
 
     lights, strip_names = build_profile(chase, strip, strip_lights, multi)
-    chase_names = [f"Chase {hlp.control_name(button_id)}" for button_id in chase]
+    chase_names = [f"Chase {hlp.control_name(control)}" for control in chase]
     server = StubServer(lights=[[name, 0.0, True] for name in lights],
                         mutate=animator(chase_names, strip_names))
     print(f"fake Spice API on port {server.port}")
@@ -178,7 +174,7 @@ def main(argv=None) -> int:
           + (f", one entry on {hlp.control_name(multi)}[1]" if multi is not None else ""))
     print(f"running the real entry point for {SECONDS:.0f}s, then interrupting it\n")
 
-    # a real interrupt, so the shutdown path and the release are the real ones
+    # a real interrupt, so the shutdown path and the hand back are the real ones
     threading.Timer(SECONDS, _thread.interrupt_main).start()
     status = 1
     try:

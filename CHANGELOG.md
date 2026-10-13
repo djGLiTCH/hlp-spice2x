@@ -6,6 +6,75 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [0.4.0] - 2026-10-13
+
+This version speaks Host Lighting Protocol 2.0 only. It is a pre-release,
+built against the protocol's release candidate (`HLP_v2.0-rc7`).
+
+### Breaking
+
+- Boards on the pre-release 1.x protocol (v1.0 to v1.4) are not driven.
+  Update the board to an HLP 2.0 build, or stay on hlp-spice2x 0.3.0. A 1.x
+  board is not found by its USB usage, and the bridge reports when one is
+  attached.
+- `--force` takes the board's lights over from another application that holds
+  them. It no longer overrides the protocol version check.
+- `--timeout` accepts 100 to 10000 ms, the range the firmware clamps to. It
+  accepted up to 65535.
+- A `range` is no longer refused at load for reaching past LED 99. The
+  board's addressable limit is read from the board, and the part of a range
+  past it is not sent.
+- `TURBO`, `CASE` and `PLED1`-`PLED4` reach every light of their kind. On 1.x
+  firmware `TURBO` and a player LED lit the first such light only.
+
+### Added
+
+- The claim on the board's lights. The bridge claims them as `hlp-spice2x`,
+  stops if another application holds them, and renews the claim while it
+  runs. If another application takes the lights over, the bridge waits and
+  claims them again when the board is unclaimed.
+- State changes by event. Where the board offers `SUBSCRIBE`, the bridge acts
+  on a change of the board's configuration, of the holder or of the takeover
+  when the event arrives. Otherwise it reads page 1 every 5 s.
+- A frame the board dropped is staged again. When the takeover ends while the
+  bridge holds the claim, the frame is staged again without waiting for the
+  game to change a light.
+- A board that leaves the bus is waited for. When another application or the
+  web configurator reboots the board, the bridge reports it, looks for the
+  same board once a second, and starts again on it when it returns. A board
+  that stops answering on a static game screen is treated the same way.
+- `--list-boards` and the no-board error report a board speaking another
+  protocol major.
+- `tests/test_hardware_checks.py` runs the hardware checks against the fake
+  board.
+
+### Changed
+
+- Profiles are unchanged, and every control name maps to the same control.
+  Names are staged by GP2040-CE's own action and light-kind values, which the
+  firmware resolves to every light carrying them.
+- The board is gated on the capabilities `HELLO` lists, never on its minor
+  version.
+- A frame has one answered report. Every report but the last is sent without
+  a reply, and the last carries the commit. An unacknowledged frame is sent
+  once more, then staged whole on the next change. The board is treated as
+  lost only if it does not answer `HELLO` either.
+- The default stream rate follows the board's render rate up to 120 frames
+  per second. The limit was 60.
+- The run ends by giving the claim up, which restores the board's animations.
+  `RELEASE` is not sent.
+- `hardware_probe` and the lights check are rewritten for 2.0. The lights
+  check is now `python -m tests.hardware_lights`, and it claims the lights
+  as the bridge does.
+- Firmware and protocol links point at the `HLP_v2.0-rc7` tag.
+
+### Removed
+
+- `hardware_precedence`. Its four steps are phase 7 of `hardware_lights`.
+- The startup probe of each control, the wait for a light table that had not
+  been published, and the check of which lights the board skipped. HLP 2.0
+  reports its lights completely from the start and announces every change.
+
 ## [0.3.0] - 2026-09-23
 
 Host Lighting Protocol v1.4 support. Additive: nothing that worked under 0.2.0
@@ -33,7 +102,7 @@ changes.
 ### Fixed
 
 - `hlp_spice2x.__version__` still said 0.1.0 in 0.2.0.
-- `hardware_sweep` and `hardware_precedence` took the board over without
+- `hardware_lights` and `hardware_precedence` took the board over without
   clearing its staging buffer, so a pixel staged by an earlier session or phase
   stayed lit. They now clear on every takeover, as the bridge does.
 
@@ -72,8 +141,9 @@ gives it. One profile and one command line work across all of them.
 - `--force`, to run against a protocol major version this bridge does not
   support. Unsupported, and for testing only.
 - Hardware checks in `tests/`: a read-only probe of what a board reports, a
-  functional sweep, a staging-order check, and a driver that runs the whole
-  program against a fake Spice API. Each adapts to whatever board is attached.
+  functional lights check, a staging-order check, and a driver that runs the
+  whole program against a fake Spice API. Each adapts to whatever board is
+  attached.
 - `tests/README.md`, explaining what every test file is for and when to use it.
 
 ### Changed
@@ -132,6 +202,7 @@ Host Lighting Protocol. Profiles name controls rather than LED indexes, so the
 firmware resolves them against each board's own LED map and one profile works
 across layouts.
 
+[0.4.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.1.0

@@ -1,678 +1,397 @@
-"""Test how a frame reaches the board's lights, across protocol versions.
+"""Test how a frame reaches the board's lights.
 
-The interesting behaviour is what a bare control name does on a board that
-gives that control more than one light. Naming the control is still the primary
-path, because that is what lets one profile work across layouts, but the classic
-pipeline colours only the one light a control's configuration names, so every
-light is staged explicitly from the light table on any board that publishes one.
+A control name is staged by its action and a case, turbo or player light by
+its kind, and the board resolves either to every light carrying it. One light
+of a control is staged by its ordinal, and a raw range as an LED run. Where two
+of these reach the same LED the order they are staged in decides the colour.
+
+Most of these assert on the frame the fake board ends up showing, LED by LED.
+The few that read the requests are about how a frame travels, which report is
+answered and which carries the commit.
 
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import pytest
 
-from hlp_spice2x import bridge, hlp, profile as profile_module
+from hlp_spice2x import bridge, hlp
+from hlp_spice2x import profile as profile_module
 
-from .fake_board import M_ULTRA_CONTROLS, M_ULTRA_LIGHTS, FakeBoard, OneShotConnection
+from .fake_board import (ALL_PIXEL_FORMATS, M_ULTRA_CONTROLS, M_ULTRA_LIGHTS, FakeBoard,
+                         OneShotConnection)
 
+T = hlp.CONTROL_TARGETS
 RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLUE = (0, 0, 255)
+WHITE = (255, 255, 255)
+UP, L3, B1, CASE = T['UP'], T['L3'], T['B1'], T['CASE']
 
-# E1 is not wired on the reference board, S1 and A1 are wired but unlit, TURBO
-# has no light, CASE and Up have lights
-CHECKED_PROFILE = {name: (('button', button_id), RED) for name, button_id in
-                   (('e1', 30), ('s1', 12), ('a1', 16), ('turbo', 28), ('case', 29), ('up', 0))}
+
+def m_ultra(**kwargs):
+    """Build the reference board."""
+    return FakeBoard(lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS, **kwargs)
 
 
-def connected(**kwargs):
-    """Open a fake board, negotiate, and return the device, capabilities and board."""
-    board = FakeBoard(**kwargs)
+def publish(board, profile, states=None, clear_first=False):
+    """Resolve a profile against a board, publish one frame and return the result."""
     device = board.open()
-    caps = hlp.negotiate(device)
-    board.requests.clear()
-    return device, caps, board
+    caps = hlp.negotiate(device, bridge.addressing_used(profile))
+    staging = bridge.staging_for(profile, caps)
+    frame = profile_module.resolve_frame(states or {name: 1.0 for name in profile}, profile)
+    return bridge.send_frame(device, frame, staging, clear_first=clear_first)
 
 
-def stage(frame, profile=None, **kwargs):
-    """Stage one frame against a fake board and return the board it was staged on."""
-    device, caps, board = connected(**kwargs)
-    bridge.send_frame(device, frame, staging=bridge.staging_for(profile or {}, caps))
-    return board
+def run_against(board, profile, **kwargs):
+    """Run the bridge for one poll against a board and return what it reported."""
+    lines = []
+    bridge.run(OneShotConnection({name: 1.0 for name in profile}), profile, device=board.open(),
+               report=lines.append, **kwargs)
+    return '\n'.join(lines)
 
 
-def lights(board):
-    """Collect the (ordinal, colour) of every SET_LIGHT entry the board was sent."""
-    return [(payload[1 + n * 4], tuple(payload[2 + n * 4:5 + n * 4]))
-            for payload in board.staged(hlp.CMD_SET_LIGHT)
-            for n in range(payload[0])]
+def test_a_control_name_lights_every_light_of_the_control():
+    """Test that Up, which this board wires to two buttons, lights both from one entry."""
+    board = m_ultra()
+    assert publish(board, {'up': (('button', UP), RED)})
+    assert board.shown == {3: RED, 12: RED}
+    stage = board.sent(hlp.CMD_STAGE)
+    assert len(stage) == 1 and stage[0][3:10] == bytes.fromhex('06 01 01 00 ff 00 00')
 
 
-def ranges(board):
-    """Collect the (start, count) of every SET_RANGE the board was sent, in order."""
-    return [(payload[0], payload[1]) for payload in board.staged(hlp.CMD_SET_RANGE)]
+def test_a_frame_is_one_answered_report_carrying_the_commit():
+    """Test that a frame's only reply is to its last report, which also publishes it."""
+    board = m_ultra()
+    assert publish(board, {'up': (('button', UP), RED)})
+    assert [(request[0], request[2] & 0x0F) for request in board.requests[-1:]] == [
+        (hlp.CMD_STAGE, hlp.FLAG_COMMIT_AFTER)]
+    assert not board.sent(hlp.CMD_COMMIT)
+    assert board.live
 
 
-def named(board):
-    """Collect the control IDs named in every SET_BUTTONS the board was sent."""
-    return [payload[1 + n * 4] for payload in board.staged(hlp.CMD_SET_BUTTONS)
-            for n in range(payload[0])]
+def test_every_report_but_the_last_is_sent_without_a_reply():
+    """Test a frame of several reports: NO_REPLY on each but the last, COMMIT_AFTER on that alone."""
+    board = m_ultra()
+    profile = {'case': (('button', CASE), BLUE), 'up': (('button', UP), RED),
+               'l3': (('light', L3, 1), GREEN), 'strip': (('range', 16, 30), WHITE)}
+    assert publish(board, profile)
+    flags = [request[2] & 0x0F for request in board.sent(hlp.CMD_STAGE)]
+    assert flags == [hlp.FLAG_NO_REPLY] * 4 + [hlp.FLAG_COMMIT_AFTER]
+    assert len(board.outbox) == 0 and len(board.frames) == 1
 
 
-def test_a_control_the_board_gives_several_lights_has_all_of_them_staged():
-    """Test that both of the reference board's Up lights are coloured, not just one."""
-    board = stage({('button', 0): RED}, version=(1, 1), lights=M_ULTRA_LIGHTS)
-    assert named(board) == [0]
-    assert ranges(board) == [(3, 1), (12, 1)]
+def test_the_passes_go_kind_then_name_then_light_then_range():
+    """Test the order the passes are emitted in, which decides who wins a shared LED."""
+    board = m_ultra()
+    profile = {'strip': (('range', 16, 2), WHITE), 'l3': (('light', L3, 1), GREEN),
+               'up': (('button', UP), RED), 'case': (('button', CASE), BLUE)}
+    assert publish(board, profile)
+    assert [request[3] & 0x0F for request in board.sent(hlp.CMD_STAGE)] == [
+        hlp.ADDRESSING_KIND, hlp.ADDRESSING_ACTION, hlp.ADDRESSING_LIGHT, hlp.ADDRESSING_LED_RUN]
 
 
-def test_the_expansion_follows_the_control_pass_and_never_precedes_it():
-    """Test the one ordering that makes per-light staging survive the frame.
-
-    Naming a control colours every light of it on one of the two render
-    pipelines, so a SET_BUTTONS emitted after the expansion would re-colour the
-    pixels the expansion had just set and undo it inside the same frame.
-    """
-    board = stage({('button', 0): RED}, version=(1, 1), lights=M_ULTRA_LIGHTS)
-    staged = [command for command, _ in board.requests
-              if command in (hlp.CMD_SET_BUTTONS, hlp.CMD_SET_RANGE)]
-    assert staged == [hlp.CMD_SET_BUTTONS, hlp.CMD_SET_RANGE, hlp.CMD_SET_RANGE]
+def test_naming_one_light_beats_reaching_it_through_its_control():
+    """Test that an indexed entry wins over the control name, whatever order the profile lists them."""
+    for profile in ({'one': (('light', UP, 1), GREEN), 'both': (('button', UP), RED)},
+                    {'both': (('button', UP), RED), 'one': (('light', UP, 1), GREEN)}):
+        board = m_ultra()
+        assert publish(board, profile)
+        assert board.shown == {3: RED, 12: GREEN}
 
 
-def test_a_board_with_no_light_table_stages_by_name_alone():
-    """Test that v1.0 leaves the breadth of a control name to the firmware.
-
-    Page 5 does not exist there, so which lights a control owns is not knowable
-    and there is nothing to expand. One entry, and the board decides what it
-    reaches.
-    """
-    board = stage({('button', 0): RED}, version=(1, 0), lights=M_ULTRA_LIGHTS)
-    assert named(board) == [0]
-    assert ranges(board) == []
+def test_an_explicit_entry_wins_even_when_it_asks_for_black():
+    """Test that one light of a control can be turned off while the control is lit."""
+    board = m_ultra()
+    profile = {'both': (('button', UP), RED), 'one': (('light', UP, 1), GREEN)}
+    assert publish(board, profile, {'both': 1.0, 'one': 0.0})
+    assert board.shown == {3: RED, 12: (0, 0, 0)}
 
 
-def test_a_synthesised_table_cannot_show_a_duplicate_so_nothing_is_expanded():
-    """Test that a table rebuilt from per-control config is not read as an inventory.
-
-    Those rows are per-control, so such a board reports one row for Up however
-    many Up buttons it has. Counting them would be answering a question the
-    table cannot answer.
-    """
-    board = stage({('button', 0): RED}, version=(1, 3), lights=M_ULTRA_LIGHTS,
-                  synthesised=True)
-    assert named(board) == [0]
-    assert ranges(board) == []
+def test_a_raw_range_beats_the_case_strip_it_lies_in():
+    """Test that a range staged over part of the case strip wins there and nowhere else."""
+    board = m_ultra()
+    assert publish(board, {'case': (('button', CASE), BLUE), 'part': (('range', 20, 3), RED)})
+    assert {led: colour for led, colour in board.shown.items() if colour == RED} == {
+        20: RED, 21: RED, 22: RED}
+    assert sum(1 for colour in board.shown.values() if colour == BLUE) == 27
 
 
-def test_a_whole_strip_control_is_never_expanded():
-    """Test that the case strip stays one entry rather than becoming thirty.
-
-    The reference board puts thirty lights on the case. Expanding it would cost
-    extra reports in every frame, on exactly the boards with the most lights,
-    to reach lights that one SET_BUTTONS entry already covers.
-    """
-    board = stage({('button', 29): RED}, version=(1, 3), lights=M_ULTRA_LIGHTS)
-    assert named(board) == [29]
-    # both, because which one an expansion would use depends on the version:
-    # raw ranges before v1.2 and ordinals from v1.2, and this board is v1.3
-    assert ranges(board) == []
-    assert lights(board) == []
+def test_an_index_counts_a_controls_lights_in_ordinal_order():
+    """Test that index n is the nth light the Lights page gives the control."""
+    board = m_ultra()
+    assert publish(board, {'a': (('light', L3, 0), RED), 'b': (('light', L3, 1), GREEN)})
+    assert board.shown == {13: RED, 15: GREEN}
+    assert board.sent(hlp.CMD_STAGE)[0][3:15] == bytes.fromhex('04 02 0d 00 ff 00 00 0f 00 00 ff 00')
 
 
-def test_an_extended_control_is_staged_by_index_before_it_can_be_staged_by_name():
-    """Test that v1.1 reaches E1 through the light table rather than by naming it.
-
-    v1.1 names the extended controls on page 5 but does not stage them by name,
-    so a SET_BUTTONS entry for one is simply counted as skipped. The light table
-    is the only route to them until v1.2.
-    """
-    board = stage({('button', 30): RED}, version=(1, 1), lights=[(0, 0), (30, 1)])
-    assert named(board) == []
-    assert ranges(board) == [(1, 1)]
+def test_an_index_reaches_one_light_of_the_case_strip():
+    """Test that a kind can be indexed too, with the fifth case light at LED 20."""
+    board = m_ultra()
+    assert publish(board, {'a': (('light', CASE, 4), RED)})
+    assert board.shown == {20: RED}
 
 
-def test_an_extended_control_is_staged_by_name_once_it_can_be():
-    """Test that v1.2 goes back to naming the control, with no raw indexes involved."""
-    board = stage({('button', 30): RED}, version=(1, 2), lights=[(0, 0), (30, 1)])
-    assert named(board) == [30]
-    assert ranges(board) == []
+def test_an_index_past_a_controls_lights_is_refused_at_startup():
+    """Test that an index the board cannot honour names the control and how many lights it has."""
+    caps = hlp.negotiate(m_ultra().open())
+    with pytest.raises(profile_module.ProfileError, match=r"Up\[2\] is out of range.*2 lights"):
+        bridge.staging_for({'a': (('light', UP, 2), RED)}, caps)
+    with pytest.raises(profile_module.ProfileError, match=r"B1\[1\] is out of range.*1 light$"):
+        bridge.staging_for({'a': (('light', B1, 1), RED)}, caps)
 
 
-def test_a_raw_range_has_the_last_word_over_a_control_name():
-    """Test that addressing a pixel explicitly beats reaching it through a control.
-
-    Both land in one staging buffer where the last write wins, so a profile that
-    says exactly which LED it means has to be emitted after anything implied by
-    a control name.
-    """
-    board = stage({('button', 0): RED, ('range', 3, 1): (0, 0, 255)},
-                  version=(1, 1), lights=M_ULTRA_LIGHTS)
-    assert ranges(board)[-1] == (3, 1)
-    assert board.staged(hlp.CMD_SET_RANGE)[-1][2:5] == bytes((0, 0, 255))
+def test_an_index_the_board_no_longer_has_is_held_back_mid_run():
+    """Test that with a problems list the entry is named and staged as nothing, not raised."""
+    caps = hlp.negotiate(m_ultra().open())
+    problems = []
+    staging = bridge.staging_for({'a': (('light', UP, 2), RED), 'b': (('button', UP), RED)},
+                                 caps, problems)
+    assert staging[('light', UP, 2)] is None
+    assert staging[('button', UP)] == (('entry',) + UP, False)
+    assert len(problems) == 1 and 'Up[2]' in problems[0]
 
 
-def test_a_target_kind_no_pass_recognises_is_refused():
-    """Test that an unknown target raises rather than lighting nothing quietly.
-
-    Staging is fire-and-forget, so a target that no pass picks up produces a
-    frame that stages nothing and reports nothing, which is the hardest possible
-    failure to notice.
-    """
-    device, _, _ = connected(version=(1, 3))
-    with pytest.raises(ValueError, match='unknown target kind'):
-        bridge.send_frame(device, {('sparkle', 3): RED})
+def test_a_held_back_entry_stages_nothing_and_the_rest_still_light():
+    """Test that send_frame skips a target staged as nothing."""
+    board = m_ultra()
+    device = board.open()
+    staging = {('light', UP, 2): None, ('button', B1): (('entry',) + B1, False)}
+    assert bridge.send_frame(device, {('light', UP, 2): RED, ('button', B1): GREEN}, staging)
+    assert board.shown == {8: GREEN}
 
 
-def test_a_per_light_target_that_was_never_resolved_is_refused():
-    """Test that an unresolved per-light target raises rather than staging nothing.
-
-    Its ordinal is only knowable against a board, so one that reached staging
-    without having been resolved is a wiring mistake, and a silent one at that.
-    """
-    device, _, _ = connected(version=(1, 3))
+def test_a_target_never_resolved_is_an_error_not_a_dark_light():
+    """Test that a frame target with no staging raises."""
     with pytest.raises(ValueError, match='never resolved'):
-        bridge.send_frame(device, {('light', 0, 1): RED}, staging={})
+        bridge.send_frame(m_ultra().open(), {('button', B1): RED}, {})
 
 
-def test_target_discovery_reads_the_table_instead_of_writing_to_the_board():
-    """Test that a board with a light table is asked nothing at all.
+def test_a_range_is_staged_as_an_led_run_split_at_the_capacity():
+    """Test that 30 LEDs of one colour go as runs of 19 and 11."""
+    board = m_ultra()
+    assert publish(board, {'strip': (('range', 16, 30), RED)})
+    assert [(request[4], request[6]) for request in board.sent(hlp.CMD_STAGE)] == [(16, 19), (35, 11)]
+    assert board.shown == {led: RED for led in range(16, 46)}
 
-    Probing means writing a black frame to every mapped control and reading back
-    what stuck. The table already says which controls have lights, so on any
-    board that publishes one the probe is pure cost.
+
+def test_a_range_is_held_to_the_addressable_limit():
+    """Test that a run reaching past the limit is cut to it.
+
+    Sent whole it would be an invalid argument that stages none of it, and sent
+    without a reply nothing would say so.
     """
-    device, caps, board = connected(version=(1, 1), lights=M_ULTRA_LIGHTS)
-    unmapped, unreachable, _ = bridge.validate_targets(
-        device, {'a': (('button', 0), RED), 'b': (('button', 29), RED)}, caps)
-    assert unmapped == []
-    assert unreachable == []
-    assert board.requests == []
+    board = FakeBoard(lights=[('B1', 0)], led_limit=20)
+    profile = {'over': (('range', 15, 10), RED), 'gone': (('range', 20, 5), GREEN)}
+    assert publish(board, profile)
+    assert board.shown == {led: RED for led in range(15, 20)}
+    assert len(board.sent(hlp.CMD_STAGE)) == 1
 
 
-def test_a_control_the_table_does_not_name_is_reported():
-    """Test that a control with no light on this board is still caught without probing."""
-    device, caps, _ = connected(version=(1, 1), lights=[(0, 0)])
-    unmapped, _, _ = bridge.validate_targets(device, {'a': (('button', 5), RED)}, caps)
-    assert unmapped == ['B2']
+def test_a_range_past_the_extent_is_warned_about_once():
+    """Test the startup warning for a range reaching past the board's last LED."""
+    text = run_against(m_ultra(), {'a': (('range', 40, 10), RED), 'b': (('range', 0, 46), RED)})
+    assert "1 raw range(s) reach past this board's 46 LEDs" in text and '[40, 10]' in text
 
 
-def test_a_board_with_no_light_table_is_still_probed():
-    """Test that v1.0 keeps the write-probe, which is the only thing it can do."""
-    device, caps, board = connected(version=(1, 0), lights=[(0, 0)])
-    unmapped, _, _ = bridge.validate_targets(
-        device, {'a': (('button', 0), RED), 'b': (('button', 5), RED)}, caps)
-    assert unmapped == ['B2']
-    assert hlp.CMD_SET_BUTTONS in [command for command, _ in board.requests]
-
-
-def test_an_unreachable_control_is_not_reported_as_missing_hardware():
-    """Test that firmware too old to reach a control says so, rather than blaming the board.
-
-    Reporting "no LED on this board" for a control the board plainly has sends
-    the user hunting a hardware fault that does not exist.
-    """
-    device, caps, _ = connected(version=(1, 0), lights=[(0, 0), (30, 1)])
-    unmapped, unreachable, _ = bridge.validate_targets(device, {'a': (('button', 30), RED)}, caps)
-    assert unmapped == []
-    assert unreachable == ['E1']
-
-
-def test_a_probe_that_goes_unanswered_does_not_end_the_run():
-    """Test that tidying up after the probes tolerates a late reply.
-
-    The clear afterwards is housekeeping. The streaming loop below shrugs off a
-    late reply by design, so letting one here end the run before streaming even
-    starts would be perverse.
-    """
-    device, caps, board = connected(version=(1, 0), lights=[(0, 0)])
-    board.pending.clear()
-    board.write = lambda data: len(data)   # answers nothing from here on
-    unmapped, _, _ = bridge.validate_targets(device, {'a': (('button', 0), RED)}, caps)
-    assert unmapped == []
-
-
-def test_the_control_table_tells_a_missing_control_from_an_unlit_one():
-    """Test that page 6 splits the unlit controls, and TURBO and CASE stay on page 5's check."""
-    device, caps, _ = connected(version=(1, 4), lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS)
-    unmapped, unreachable, absent = bridge.validate_targets(device, CHECKED_PROFILE, caps)
-    assert absent == ['E1']
-    assert unmapped == ['S1', 'A1', 'TURBO']
-    assert unreachable == []
-
-
-def test_without_a_control_table_the_profile_check_is_unchanged():
-    """Test that the same profile on the same hardware at v1.3 reports as it always did."""
-    device, caps, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS)
-    unmapped, unreachable, absent = bridge.validate_targets(device, CHECKED_PROFILE, caps)
-    assert absent == []
-    assert unmapped == ['S1', 'A1', 'TURBO', 'E1']
-    assert unreachable == []
-
-
-def test_a_control_table_that_could_not_be_read_gives_the_v1_3_check():
-    """Test that a v1.4 board whose page 6 failed makes no absence claims at all."""
-    board = FakeBoard(version=(1, 4), lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS)
-    board._controls_page = lambda start: board._reply(status=2)
+def test_a_frame_with_fewer_targets_clears_first():
+    """Test that CLEAR goes ahead of the staging when asked, without a reply of its own."""
+    board = m_ultra()
     device = board.open()
-    caps = hlp.negotiate(device)
-    assert caps.control_table is True
-    unmapped, _, absent = bridge.validate_targets(device, CHECKED_PROFILE, caps)
-    assert absent == []
-    assert unmapped == ['S1', 'A1', 'TURBO', 'E1']
+    staging = {('button', UP): (('entry',) + UP, False), ('button', B1): (('entry',) + B1, False)}
+    assert bridge.send_frame(device, {('button', UP): RED, ('button', B1): RED}, staging)
+    assert board.shown == {3: RED, 12: RED, 8: RED}
+    assert bridge.send_frame(device, {('button', B1): GREEN}, staging, clear_first=True)
+    assert board.shown == {8: GREEN}
+    clear = board.sent(hlp.CMD_CLEAR)
+    assert len(clear) == 1 and clear[0][2] & 0x0F == hlp.FLAG_NO_REPLY
 
 
-def test_a_control_that_will_light_is_never_reported_absent():
-    """Test that only unlit controls are checked against page 6."""
-    controls = [control for control in M_ULTRA_CONTROLS if control[2] != 0]   # no Up pin
-    device, caps, _ = connected(version=(1, 4), lights=M_ULTRA_LIGHTS, controls=controls)
-    unmapped, _, absent = bridge.validate_targets(device, {'up': (('button', 0), RED)}, caps)
-    assert unmapped == []
-    assert absent == []
+def test_an_empty_frame_is_still_published():
+    """Test that a frame with no targets clears and commits in one answered report."""
+    board = m_ultra()
+    device = board.open()
+    staging = {('button', B1): (('entry',) + B1, False)}
+    assert bridge.send_frame(device, {('button', B1): RED}, staging)
+    assert bridge.send_frame(device, {}, staging)
+    assert board.shown == {} and board.live and len(board.frames) == 2
+    assert board.requests[-1][0] == hlp.CMD_CLEAR
+    assert board.requests[-1][2] & 0x0F == hlp.FLAG_COMMIT_AFTER
 
 
-def test_a_board_still_in_led_setup_is_probed_and_the_result_split():
-    """Test the early-connect case: control-table bit set from boot, light-table bit not yet."""
-    device, caps, board = connected(version=(1, 4), lights=M_ULTRA_LIGHTS,
-                                    controls=M_ULTRA_CONTROLS, light_table_feature=False)
-    unmapped, _, absent = bridge.validate_targets(device, CHECKED_PROFILE, caps)
-    assert hlp.CMD_SET_BUTTONS in [command for command, _ in board.requests]
-    assert absent == ['E1']
-    assert unmapped == ['S1', 'A1', 'TURBO']
+def test_a_light_at_zero_is_staged_black_not_left_out():
+    """Test that a mapped light the game reports off is staged black."""
+    board = m_ultra()
+    assert publish(board, {'b1': (('button', B1), RED)}, {'b1': 0.0})
+    assert board.shown == {8: (0, 0, 0)}
 
 
-def test_a_run_names_the_controls_the_board_does_not_have():
-    """Test that the new warning reaches the run's output beside the existing one."""
-    lines = []
-    bridge.run(OneShotConnection(), CHECKED_PROFILE,
-               device=FakeBoard(version=(1, 4), lights=M_ULTRA_LIGHTS,
-                                controls=M_ULTRA_CONTROLS).open(), report=lines.append)
-    assert 'warning: 1 mapped control(s) are not on this board: E1' in lines
-    assert 'warning: 3 mapped control(s) have no LED on this board: S1, A1, TURBO' in lines
+def test_many_controls_are_split_across_reports_at_the_capacity():
+    """Test that sixteen controls by action go as eleven and five, all lit."""
+    board = FakeBoard()
+    profile = {name: (('button', T[name.upper()]), RED) for name in hlp.ACTION_NAMES[:16]}
+    assert publish(board, profile)
+    assert [request[4] for request in board.sent(hlp.CMD_STAGE)] == [11, 5]
+    assert board.shown == {led: RED for led in range(16)}
 
 
-@pytest.mark.parametrize('render_hz, expected, why', [
-    (40, 40.0, "matching the board's render rate"),
-    (100, 60.0, 'capped'),
-    (0, 60.0, 'did not state'),
+def test_a_refused_frame_is_reported_with_the_holder():
+    """Test that a frame sent under an outdated generation comes back naming who holds the claim."""
+    board = m_ultra()
+    device = board.open()
+    device.claim(hlp.CLAIM_TAKE, 0xA1, b'test')
+    board.take_over()
+    result = bridge.send_frame(device, {('button', B1): RED}, {('button', B1): (('entry',) + B1, False)})
+    assert not result and result.holder['holder_name'] == 'Other'
+    assert board.frames == []
+
+
+def test_a_frame_the_board_calls_invalid_is_raised_not_swallowed():
+    """Test that a refusal other than the claim is an error naming the request byte."""
+    board = m_ultra(led_limit=10)
+    staging = {('range', 30, 4): (('run', 30, 4), False)}
+    with pytest.raises(hlp.HostLightingRejected, match='INVALID_ARG at request byte 4'):
+        bridge.send_frame(board.open(), {('range', 30, 4): RED}, staging)
+
+
+@pytest.mark.parametrize('colour_format', [2, 3])
+def test_white_is_sent_as_rgbw_to_a_white_chain(colour_format):
+    """Test that an RRGGBBWW colour goes as an RGBW pixel, by name, with the white moved over."""
+    board = m_ultra(colour_format=colour_format)
+    profile = {'up': (('button', UP), (255, 255, 255, 0)), 'b1': (('button', B1), (255, 0, 0, 128))}
+    assert publish(board, profile)
+    assert board.shown == {3: (0, 0, 0, 255), 12: (0, 0, 0, 255), 8: (255, 0, 0, 128)}
+    stage = board.sent(hlp.CMD_STAGE)
+    assert len(stage) == 1 and stage[0][3] == 0x16
+
+
+def test_white_reaches_a_light_a_range_and_a_kind_the_same_way():
+    """Test that every way of naming a light carries RGBW."""
+    board = m_ultra(colour_format=2)
+    grey = (10, 10, 10, 5)
+    profile = {'a': (('light', L3, 0), grey), 'b': (('range', 0, 2), grey),
+               'c': (('button', T['PLED1']), grey), 'd': (('button', CASE), grey)}
+    assert publish(board, profile)
+    assert set(board.shown.values()) == {(0, 0, 0, 15)}
+    assert {request[3] >> 4 for request in board.sent(hlp.CMD_STAGE)} == {hlp.PIXEL_RGBW}
+
+
+def test_a_six_digit_colour_stays_rgb_on_a_white_chain():
+    """Test that only an entry asking for white is sent as RGBW."""
+    board = m_ultra(colour_format=2)
+    assert publish(board, {'up': (('button', UP), WHITE), 'b1': (('button', B1), (9, 9, 9, 9))})
+    assert board.shown == {3: WHITE, 12: WHITE, 8: (0, 0, 0, 18)}
+    assert [request[3] for request in board.sent(hlp.CMD_STAGE)] == [0x06, 0x16]
+
+
+def test_white_is_a_property_of_the_target_not_of_one_entry():
+    """Test that two entries on one control, only one asking for white, are sent as one RGBW pixel."""
+    board = m_ultra(colour_format=2)
+    profile = {'a': (('button', B1), (10, 20, 30)), 'b': (('button', B1), (1, 2, 3, 40))}
+    assert publish(board, profile)
+    assert board.shown == {8: (0, 11, 22, 51)}
+
+
+def test_white_is_dropped_with_a_reason_on_a_chain_without_it():
+    """Test that an RGB chain gets the colour as RGB, and the user is told why once."""
+    board = m_ultra(colour_format=0)
+    profile = {'b1': (('button', B1), (255, 0, 0, 128)), 'up': (('button', UP), (1, 2, 3, 4))}
+    text = run_against(board, profile)
+    assert board.frames == [{8: RED, 3: (1, 2, 3), 12: (1, 2, 3)}]
+    assert text.count('white component') == 1
+    assert '2 profile entries ask for a white component' in text
+    assert 'LED chain is GRB and has no white emitter' in text
+
+
+def test_white_is_dropped_with_a_reason_on_firmware_without_the_format():
+    """Test that a white chain whose firmware does not list RGBW is sent RGB, with the reason."""
+    board = m_ultra(colour_format=2, pixel_formats=ALL_PIXEL_FORMATS - {hlp.PIXEL_RGBW})
+    text = run_against(board, {'b1': (('button', B1), (255, 0, 0, 128))})
+    assert board.frames == [{8: RED}]
+    assert '1 profile entry asks for a white component' in text
+    assert 'does not list the RGBW pixel format' in text
+
+
+def test_no_white_warning_without_white_in_the_profile():
+    """Test that a profile asking for no white is told nothing about it."""
+    assert 'white component' not in run_against(m_ultra(), {'b1': (('button', B1), RED)})
+
+
+def test_startup_names_controls_the_board_lacks_or_cannot_light():
+    """Test the two startup warnings: wired with no LED, and not on the board at all."""
+    profile = {'s1': (('button', T['S1']), RED), 'e1': (('button', T['E1']), RED),
+               'a3': (('button', T['A3']), RED), 'pled': (('button', T['PLED1']), RED),
+               'up': (('button', UP), RED)}
+    text = run_against(m_ultra(), profile)
+    assert '2 mapped control(s) are not on this board: A3, E1' in text
+    assert '2 mapped control(s) have no LED on this board: S1, PLED1' in text
+
+
+def test_startup_says_which_controls_have_more_than_one_light():
+    """Test the note for a control wired to several lights, which leaves out the case strip."""
+    profile = {'up': (('button', UP), RED), 'l3': (('button', L3), RED),
+               'b1': (('button', B1), RED), 'case': (('button', CASE), RED)}
+    text = run_against(m_ultra(), profile)
+    assert 'more than one light, all of which will be lit: L3, Up' in text
+
+
+def test_no_warnings_for_a_profile_the_board_fully_lights():
+    """Test that a clean profile on a plain board warns about nothing."""
+    text = run_against(FakeBoard(), {'b1': (('button', B1), RED)})
+    assert 'warning' not in text and 'more than one light' not in text
+
+
+def test_addressing_used_follows_the_profile():
+    """Test which addressing modes a profile needs the board to list."""
+    assert bridge.addressing_used({'a': (('button', B1), RED)}) == {hlp.ADDRESSING_ACTION}
+    assert bridge.addressing_used({'a': (('button', CASE), RED), 'b': (('light', CASE, 1), RED),
+                                   'c': (('range', 0, 1), RED)}) == {
+        hlp.ADDRESSING_KIND, hlp.ADDRESSING_LIGHT, hlp.ADDRESSING_LED_RUN}
+
+
+@pytest.mark.parametrize('fps, render_hz, rate, why', [
+    (30.0, 40, 30.0, 'asked for'),
+    (None, 40, 40.0, 'matching'),
+    (None, 0, 60.0, 'did not state'),
+    (None, 240, 120.0, 'capped below the board\'s 240 Hz'),
+    (None, 120, 120.0, 'matching'),
+    (None, 60, 60.0, 'matching'),
 ])
-def test_the_stream_rate_follows_the_board_up_to_the_cap(render_hz, expected, why):
-    """Test that a slower board is matched exactly and a faster one is capped.
-
-    Matching below the cap stops the bridge sending frames the board will never
-    render. Capping above it keeps headroom for a slow poll or a retry, which is
-    worth more than a rate nobody can see.
-    """
-    _, caps, _ = connected(version=(1, 3), render_hz=render_hz)
-    rate, reason = bridge.resolve_stream_rate(None, caps)
-    assert rate == expected
-    assert why in reason
-
-
-def test_an_explicit_rate_overrides_the_board():
-    """Test that --fps still wins, in either direction."""
-    _, caps, _ = connected(version=(1, 3), render_hz=40)
-    assert bridge.resolve_stream_rate(100.0, caps) == (100.0, 'asked for with --fps')
-
-
-def test_a_dry_run_has_a_rate_without_having_a_board():
-    """Test that the absent capabilities resolve a rate rather than needing a special case."""
-    rate, reason = bridge.resolve_stream_rate(None, hlp.HostLightingCapabilities.absent())
-    assert rate == bridge.DEFAULT_FPS
-    assert 'no board' in reason
-
-
-def test_a_changed_light_table_is_re_read_rather_than_only_reported():
-    """Test that a fingerprint change replaces the cached table and the plan with it.
-
-    A stale ordinal is still a perfectly valid ordinal, so a table that moved
-    underneath the cache points at the wrong lights while every reply still says
-    the frame applied.
-    """
-    device, caps, board = connected(version=(1, 3), lights=[(0, 0), (0, 1)])
-    assert len(caps.staging_plan()[0][1]) == 2
-
-    board.lights = [(0, 0, 1)]
-    board.fingerprint = 99
-    caps.refresh(device)
-    assert caps.staging_plan() == {}
-    assert caps.fingerprint == 99
-
-
-def test_a_run_says_what_rate_it_settled_on():
-    """Test that the chosen stream rate reaches the run's output, not just the helper."""
-    lines = []
-    bridge.run(OneShotConnection(), {'P1': (('button', 4), RED)},
-               device=FakeBoard(version=(1, 3), render_hz=40).open(), report=lines.append)
-    reported = '|'.join(lines)
-    assert "streaming at 40 fps (matching the board's render rate)" in reported
-
-
-def test_the_expansion_switches_to_ordinals_once_the_board_offers_them():
-    """Test that v1.2 addresses each light by its ordinal instead of by raw index.
-
-    An ordinal names the whole record in one entry and is immune to page 2's
-    best-effort LED bindings, so it is the better address wherever it exists.
-    """
-    board = stage({('button', 0): RED}, version=(1, 2), lights=M_ULTRA_LIGHTS)
-    assert named(board) == [0]
-    assert [ordinal for ordinal, _ in lights(board)] == [3, 12]
-    assert ranges(board) == []
-
-
-def test_a_per_light_target_colours_that_light_alone():
-    """Test that an indexed entry stages one ordinal and does not name the control."""
-    profile = {'Second Up': (('light', 0, 1), RED)}
-    board = stage({('light', 0, 1): RED}, profile=profile, version=(1, 2),
-                  lights=M_ULTRA_LIGHTS)
-    assert named(board) == []
-    assert lights(board) == [(12, RED)]
-
-
-def test_an_index_counts_the_lights_the_table_gives_that_control():
-    """Test that index 0 and index 1 pick the first and second of Up's two lights."""
-    for index, ordinal in ((0, 3), (1, 12)):
-        profile = {'Up': (('light', 0, index), RED)}
-        board = stage({('light', 0, index): RED}, profile=profile, version=(1, 2),
-                      lights=M_ULTRA_LIGHTS)
-        assert lights(board) == [(ordinal, RED)]
-
-
-def test_an_explicit_light_beats_the_expansion_of_its_own_control():
-    """Test that naming one light wins over a control name that also covers it."""
-    profile = {'Up': (('button', 0), RED), 'Second Up': (('light', 0, 1), (0, 0, 255))}
-    board = stage({('button', 0): RED, ('light', 0, 1): (0, 0, 255)}, profile=profile,
-                  version=(1, 2), lights=M_ULTRA_LIGHTS)
-    assert lights(board) == [(3, RED), (12, RED), (12, (0, 0, 255))]
-
-
-def test_a_per_light_target_on_firmware_too_old_is_refused_by_version():
-    """Test that v1.1 refuses an indexed entry and names the firmware needed.
-
-    A silent difference in which light lights is worse than a refusal that says
-    what would fix it.
-    """
-    _, caps, _ = connected(version=(1, 1), lights=M_ULTRA_LIGHTS)
-    with pytest.raises(hlp.HostLightingIncompatible, match='v1.2 or newer') as caught:
-        bridge.staging_for({'Up': (('light', 0, 1), RED)}, caps)
-    assert 'v1.1' in str(caught.value)
-
-
-def test_a_per_light_target_past_the_end_of_a_control_is_refused():
-    """Test that an index the board cannot offer says how many lights it does have."""
-    _, caps, _ = connected(version=(1, 2), lights=M_ULTRA_LIGHTS)
-    with pytest.raises(profile_module.ProfileError, match='out of range') as caught:
-        bridge.staging_for({'Up': (('light', 0, 5), RED)}, caps)
-    assert '2 lights' in str(caught.value)
-
-
-def test_a_synthesised_table_is_named_as_the_reason_rather_than_the_firmware():
-    """Test that a board whose table cannot show duplicates says so.
-
-    Reporting this as an out-of-range index would send the user chasing a
-    firmware upgrade that changes nothing, on a board that visibly has two Up
-    buttons.
-    """
-    _, caps, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS, synthesised=True)
-    with pytest.raises(profile_module.ProfileError, match='synthesised') as caught:
-        bridge.staging_for({'Up': (('light', 0, 1), RED)}, caps)
-    assert 'board limitation' in str(caught.value)
-
-
-def white_lights(board):
-    """Collect the (ordinal, colour) of every SET_LIGHT_RGBW entry sent."""
-    return [(payload[1 + n * 5], tuple(payload[2 + n * 5:6 + n * 5]))
-            for payload in board.staged(hlp.CMD_SET_LIGHT_RGBW)
-            for n in range(payload[0])]
-
-
-def test_the_outcome_mask_names_the_ordinal_the_board_skipped():
-    """Test that a stale ordinal is reported rather than silently doing nothing."""
-    device, _, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS)
-    result = bridge.send_frame(device, {('button', 0): RED},
-                               staging={('button', 0): (False, [('light', 99)])}, verify=True)
-    assert result.skipped == [99]
-    assert result.acknowledged is True
-
-
-def test_a_frame_result_still_reads_as_a_plain_yes_or_no():
-    """Test that widening the return kept the only thing callers used it for."""
-    device, _, _ = connected(version=(1, 3))
-    assert bridge.send_frame(device, {('button', 0): RED})
-
-
-def test_the_mask_is_not_read_on_the_firmware_that_zero_fills_it():
-    """Test that v1.2 is never asked, because its answer would be a lie.
-
-    A v1.2 board zero-fills the outcome bytes, so reading them says every entry
-    was skipped, including the ones that lit. The gate is the whole reason the
-    capability exists separately from per-light staging.
-    """
-    _, caps, _ = connected(version=(1, 2), lights=M_ULTRA_LIGHTS)
-    assert caps.per_light is True
-    assert caps.outcome_mask is False
-
-    device, _, _ = connected(version=(1, 2), lights=M_ULTRA_LIGHTS)
-    result = bridge.send_frame(device, {('button', 0): RED},
-                               staging={('button', 0): (False, [('light', 3)])})
-    assert result.skipped == []
-
-
-def test_reading_the_mask_on_a_v1_2_board_would_report_everything_skipped():
-    """Test the trap itself, so the gate above cannot be removed without a failure."""
-    device, _, _ = connected(version=(1, 2), lights=M_ULTRA_LIGHTS)
-    applied, skipped, stale = device.set_lights([(3, 255, 0, 0)], outcomes=True)
-    assert (applied, skipped) == (1, 0)
-    assert stale == [3]
-
-
-def test_a_skip_after_the_map_moved_re_reads_the_light_table():
-    """Test that a stale ordinal is treated as staleness when the map really moved."""
-    device, caps, board = connected(version=(1, 3), lights=[(0, 0), (0, 1)])
-    board.lights = [(0, 0, 1)]
-    board.fingerprint = 77
-    lines = []
-    assert bridge.react_to_skips(device, caps, [1], lines.append) is True
-    assert 're-read' in lines[0]
-    assert caps.fingerprint == 77
-
-
-def test_a_skip_with_no_map_change_says_the_profile_is_asking_for_too_much():
-    """Test that an unchanged fingerprint stops the re-reading and blames the right thing.
-
-    Re-reading a table that has not moved would return the same ordinals and
-    the same skip, every frame, forever.
-    """
-    device, caps, _ = connected(version=(1, 3), lights=[(0, 0)])
-    lines = []
-    assert bridge.react_to_skips(device, caps, [9], lines.append) is False
-    assert 'does not have' in lines[0]
-
-
-def test_a_colour_with_no_white_is_staged_exactly_as_before():
-    """Test that adding white support changed nothing for profiles without it."""
-    board = stage({('button', 4): RED}, version=(1, 3), colour_format=2,
-                  lights=M_ULTRA_LIGHTS)
-    assert named(board) == [4]
-    assert white_lights(board) == []
-
-
-def test_white_reaches_a_white_chain_on_firmware_that_honours_it():
-    """Test that v1.3 plus a white chain routes the colour through SET_LIGHT_RGBW.
-
-    SET_BUTTONS has no RGBW form, so a control asking for white has to be
-    reached one light at a time instead of by name.
-    """
-    profile = {'Up': (('button', 0), (255, 255, 255, 0))}
-    board = stage({('button', 0): (255, 255, 255, 0)}, profile=profile, version=(1, 3),
-                  colour_format=2, lights=M_ULTRA_LIGHTS)
-    assert named(board) == []
-    assert white_lights(board) == [(3, (0, 0, 0, 255)), (12, (0, 0, 0, 255))]
-
-
-def test_white_is_dropped_where_the_chain_has_no_emitter_for_it():
-    """Test that a GRB board gets plain RGB, since it has nothing to send white to."""
-    profile = {'Up': (('button', 0), (255, 255, 255, 255))}
-    board = stage({('button', 0): (255, 255, 255, 255)}, profile=profile, version=(1, 3),
-                  colour_format=0, lights=M_ULTRA_LIGHTS)
-    assert named(board) == [0]
-    assert white_lights(board) == []
-    _, caps, _ = connected(version=(1, 3), colour_format=0, lights=M_ULTRA_LIGHTS)
-    assert 'no white emitter' in bridge.white_warnings(profile, caps)[0]
-
-
-def test_white_is_dropped_on_firmware_that_ignores_a_host_supplied_one():
-    """Test that a white chain on v1.2 still gets RGB, which is what renders right there.
-
-    Older firmware maps achromatic colours onto the white emitter itself, so
-    sending the textbook subtractive white would render dark.
-    """
-    profile = {'Up': (('button', 0), (255, 255, 255, 255))}
-    board = stage({('button', 0): (255, 255, 255, 255)}, profile=profile, version=(1, 2),
-                  colour_format=2, lights=M_ULTRA_LIGHTS)
-    assert named(board) == [0]
-    assert white_lights(board) == []
-    _, caps, _ = connected(version=(1, 2), colour_format=2, lights=M_ULTRA_LIGHTS)
-    assert 'v1.3 honours it' in bridge.white_warnings(profile, caps)[0]
-
-
-def test_a_per_light_target_carries_white_to_its_own_ordinal():
-    """Test that an indexed entry asking for white stages one RGBW light."""
-    profile = {'Second Up': (('light', 0, 1), (255, 0, 0, 128))}
-    board = stage({('light', 0, 1): (255, 0, 0, 128)}, profile=profile, version=(1, 3),
-                  colour_format=3, lights=M_ULTRA_LIGHTS)
-    assert white_lights(board) == [(12, (255, 0, 0, 128))]
-
-
-def test_a_raw_range_carries_white_through_the_rgbw_range_command():
-    """Test that a range entry asking for white uses SET_RANGE_RGBW.
-
-    Long enough to cross a report boundary, because the RGBW form carries fewer
-    pixels per report than the RGB one and a range that fits in a single report
-    would never exercise the split.
-    """
-    profile = {'Neon': (('range', 16, 30), (255, 255, 255, 0))}
-    board = stage({('range', 16, 30): (255, 255, 255, 0)}, profile=profile, version=(1, 3),
-                  colour_format=2, lights=M_ULTRA_LIGHTS)
-    payloads = board.staged(hlp.CMD_SET_RANGE_RGBW)
-    assert [(payload[0], payload[1]) for payload in payloads] == [(16, 15), (31, 15)]
-    assert payloads[0][2:6] == bytes((0, 0, 0, 255))
-
-
-def test_white_on_a_control_with_no_light_table_entry_is_reported():
-    """Test that a control the table cannot break down is named, not silently dropped.
-
-    White can only be sent to a light named individually, so a control the table
-    says nothing about has nowhere to put it. The colour still has to reach the
-    board as plain RGB rather than not at all, which is the half a warning
-    string cannot show.
-    """
-    profile = {'B2': (('button', 5), (255, 255, 255, 0))}
-    _, caps, _ = connected(version=(1, 3), colour_format=2, lights=[(0, 0)])
-    assert 'B2' in bridge.white_warnings(profile, caps)[0]
-
-    board = stage({('button', 5): (255, 255, 255, 0)}, profile=profile, version=(1, 3),
-                  colour_format=2, lights=[(0, 0)])
-    assert named(board) == [5]
-    assert white_lights(board) == []
-
-
-def test_a_raw_range_past_the_board_is_reported_at_connect():
-    """Test that a range written for a bigger board is named rather than lighting nothing.
-
-    The load-time bound is the firmware's buffer ceiling, which is all that can
-    be known without a board. It catches a typo; it does not catch a profile
-    written for a 46-light board and run on a 16-light one.
-    """
-    _, caps, _ = connected(version=(1, 3), lights=[(n, n) for n in range(16)])
-    profile = {'Far': (('range', 16, 30), RED), 'Near': (('range', 0, 4), RED),
-               'Edge': (('range', 14, 4), RED)}
-    assert bridge.ranges_past_the_board(profile, caps) == [(14, 4), (16, 30)]
-
-
-def test_a_range_inside_the_board_is_not_reported():
-    """Test that the warning stays quiet on a profile that fits."""
-    _, caps, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS)
-    assert bridge.ranges_past_the_board({'Neon': (('range', 16, 30), RED)}, caps) == []
-
-
-def test_a_board_that_reports_no_extent_falls_back_to_the_buffer_ceiling():
-    """Test that a pre-v1.1 board or a dry run does not report every range as past the end."""
-    assert bridge.ranges_past_the_board({'Neon': (('range', 16, 30), RED)},
-                                        hlp.HostLightingCapabilities.absent()) == []
-
-
-def test_a_board_with_no_light_table_yet_holds_per_light_entries_back():
-    """Test that a clear feature bit on new-enough firmware is a race, not a verdict.
-
-    The light registry is populated on the render core during LED setup, so a
-    host that enumerates a moment early sees the bit clear on a board that would
-    have answered a moment later. Refusing to start would turn that into a
-    permanent judgement on a board that is merely still waking up.
-    """
-    _, caps, _ = connected(version=(1, 3), lights=M_ULTRA_LIGHTS, light_table_feature=False)
-    profile = {'Second Up': (('light', 0, 1), RED)}
-    assert bridge.deferred_lights(profile, caps) == ['Up[1]']
-    assert bridge.staging_for(profile, caps)[('light', 0, 1)] == (False, [])
-
-
-def test_a_held_back_entry_stages_nothing_rather_than_raising():
-    """Test that a held-back target is passed over instead of tripping the guard."""
-    profile = {'Second Up': (('light', 0, 1), RED)}
-    board = stage({('light', 0, 1): RED}, profile=profile, version=(1, 3),
-                  lights=M_ULTRA_LIGHTS, light_table_feature=False)
-    assert lights(board) == []
-    assert named(board) == []
-
-
-def test_firmware_too_old_is_still_refused_rather_than_held_back():
-    """Test that the version case keeps its hard error, which no waiting can fix."""
-    _, caps, _ = connected(version=(1, 1), lights=M_ULTRA_LIGHTS)
-    profile = {'Second Up': (('light', 0, 1), RED)}
-    assert bridge.deferred_lights(profile, caps) == []
-    with pytest.raises(hlp.HostLightingIncompatible):
-        bridge.staging_for(profile, caps)
-
-
-def test_a_held_back_entry_resolves_once_the_table_appears():
-    """Test that the entry starts working by itself when the board catches up."""
-    device, caps, board = connected(version=(1, 3), lights=M_ULTRA_LIGHTS,
-                                    light_table_feature=False)
-    profile = {'Second Up': (('light', 0, 1), RED)}
-    assert bridge.staging_for(profile, caps)[('light', 0, 1)] == (False, [])
-
-    board.light_table_feature = True
-    board.fingerprint += 1
-    caps.refresh(device)
-    assert bridge.deferred_lights(profile, caps) == []
-    assert bridge.staging_for(profile, caps)[('light', 0, 1)] == (False, [('light', 12)])
-
-
-@pytest.mark.parametrize('white_first', [True, False])
-def test_white_survives_whatever_order_the_profile_lists_its_entries_in(white_first):
-    """Test that a second entry on one target cannot quietly drop the white channel.
-
-    Two profile entries may name the same target, and they are merged into the
-    wider of the two colours before staging. Deciding per entry whether white is
-    in play would let whichever entry the profile happens to list last decide it,
-    so swapping two lines of JSON would change what the LED emits.
-    """
-    plain = {'plain': (('light', 0, 0), (0, 0, 255))}
-    coloured = {'white': (('light', 0, 0), (255, 0, 255, 128))}
-    profile = dict(**coloured, **plain) if white_first else dict(**plain, **coloured)
-
-    board = stage({('light', 0, 0): (255, 0, 255, 128)}, profile=profile, version=(1, 3),
-                  colour_format=3, lights=M_ULTRA_LIGHTS)
-    assert white_lights(board) == [(3, hlp.subtractive_white((255, 0, 255, 128)))]
-    assert lights(board) == []
-
-
-@pytest.mark.parametrize('render_hz, reason', [
-    (59, 'matching'), (60, 'matching'), (61, 'capped'),
-])
-def test_a_board_rendering_at_the_cap_is_not_told_it_is_being_throttled(render_hz, reason):
-    """Test the boundary between matching a board's rate and capping it.
-
-    A board rendering at exactly the cap gets exactly its own rate, so telling
-    it that it has been capped points the user at --fps to recover a rate they
-    already have.
-    """
-    _, caps, _ = connected(version=(1, 3), render_hz=render_hz)
-    assert reason in bridge.resolve_stream_rate(None, caps)[1]
+def test_the_stream_rate_follows_the_board(fps, render_hz, rate, why):
+    """Test the rate chosen from --fps and the Summary's render rate."""
+    caps = hlp.negotiate(FakeBoard(render_hz=render_hz).open())
+    chosen, reason = bridge.resolve_stream_rate(fps, caps)
+    assert chosen == rate and why in reason
+
+
+def test_the_stream_rate_without_a_board_is_the_default():
+    """Test that a dry run streams at the default rate."""
+    assert bridge.resolve_stream_rate(None, hlp.HostLightingCapabilities.absent()) == (
+        60.0, 'no board to ask')
+
+
+def test_a_control_on_a_hall_effect_trigger_is_lit_like_any_other():
+    """Test that a light whose owner is a trigger key is reached by name and by index, with no warning."""
+    wiring = {'lights': [('B1', 4), ('B2', 5)], 'controls': [(0x83, B1[1]), (6, T['B2'][1])]}
+    board = FakeBoard(**wiring)
+    caps = hlp.negotiate(board.open())
+    assert caps.lights[0]['owner_pin'] == 0x83 and caps.lights[0]['owner_action'] == B1[1]
+    assert [(record['key'], record['lit']) for record in caps.controls] == [(0x83, True), (6, True)]
+    assert publish(board, {'b1': (('button', B1), RED)})
+    assert board.shown == {4: RED}
+    board = FakeBoard(**wiring)
+    assert publish(board, {'one': (('light', B1, 0), GREEN)})
+    assert board.shown == {4: GREEN}
+    assert 'warning' not in run_against(FakeBoard(**wiring), {'b1': (('button', B1), RED)})
+
+
+def test_the_reports_already_waiting_are_read_before_a_frame_is_sent():
+    """Test that an event waiting on the interface is taken in before the frame's first report."""
+    board = FakeBoard()
+    device = board.open()
+    profile = {'b1': (('button', B1), RED)}
+    staging = bridge.staging_for(profile, hlp.negotiate(device, bridge.addressing_used(profile)))
+    board.outbox.append(bytes([hlp.EVENT_MARKER, 9, 0]) + bytes(61))
+    waiting = []
+    board.hooks.append(lambda fake, request: waiting.append(len(fake.outbox)))
+    assert bridge.send_frame(device, {('button', B1): RED}, staging, clear_first=True)
+    assert waiting[0] == 0 and len(device.events) == 1

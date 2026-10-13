@@ -1,7 +1,7 @@
 # The package
 
-Five modules, about 2400 lines. This is a guide to reading them, for anyone
-changing the bridge or implementing Host Lighting support of their own.
+This guide describes the five modules, for a reader changing the bridge or
+implementing Host Lighting support in another host.
 
 ```
 spice2x  --(Spice API, TCP/JSON)-->  hlp-spice2x  --(HID)-->  GP2040-CE board
@@ -9,82 +9,113 @@ spice2x  --(Spice API, TCP/JSON)-->  hlp-spice2x  --(HID)-->  GP2040-CE board
                                         profile.py
 ```
 
-| Module | Lines | What it is |
-|---|---|---|
-| `hlp.py` | 1217 | The protocol. Framing, capability pages, staging commands, and what each version of the protocol offers. Depends on nothing but `hidapi`. |
-| `bridge.py` | 747 | The loop. Polls, resolves a frame, stages it, publishes it, and keeps the board's takeover alive. |
-| `profile.py` | 198 | Profiles. Turns a JSON file into targets and colours, and a set of light levels into a frame. |
-| `spiceapi.py` | 122 | The game side. A minimal Spice API client, including the RC4 the password option needs. |
-| `__main__.py` | 152 | The command line. Parses arguments, opens both ends, and hands them to the loop. |
+| Module | What it is |
+|---|---|
+| `hlp.py` | The protocol: framing, reply matching, `HELLO`, the pages, the `STAGE` encoders, and what a board offers. It depends only on `hidapi`. |
+| `bridge.py` | The loop. It claims the lights, polls, resolves a frame, stages and publishes it, and follows the board's state. |
+| `profile.py` | Profiles. It turns a JSON file into targets and colours, and a set of light levels into a frame. |
+| `spiceapi.py` | The game side, a minimal Spice API client with the RC4 the password option needs. |
+| `__main__.py` | The command line. It parses arguments, opens both ends, and passes them to the loop. |
 
-Dependencies run one way. `hlp.py` and `spiceapi.py` know nothing about anything
-else here, `profile.py` knows only `hlp.py`, and `bridge.py` knows both. Nothing
-imports `__main__.py`.
+Dependencies run one way. `hlp.py` and `spiceapi.py` import no other module
+here, `profile.py` imports only `hlp.py`, and `bridge.py` imports `hlp.py` and
+`profile.py`. Nothing imports `__main__.py`.
 
-## Reading it in order
+## Reading order
 
-Start with **`hlp.py`**, because everything else is shaped by it. Its module
-docstring lists the capability pages and says which the bridge reads. The parts
-worth reading first, in the order a host uses them:
+Start with `hlp.py`. Its module docstring lists the pages and says which the
+bridge reads. Its parts, in the order a host uses them:
 
-- `negotiate` - the handshake. Reads the version and the capability pages once,
-  and decides what this board can do. Everything downstream branches on its
-  result rather than on a version number.
-- `HostLightingCapabilities` - that result. Each property answers one question a
-  call site wants to ask. Three of them deliberately do not follow from the
-  version alone, and the docstrings say why.
-- `decode_state`, `decode_led_map`, `decode_lights`, `decode_controls` - the
-  capability pages, field by field. Pure functions over a 64-byte reply.
-- `send`, `request`, `request_ok` - the transport. Staging is fire-and-forget for
-  throughput; only the commit that publishes a frame is waited on.
+- `find_devices` and `open_device` do discovery by usage page and usage. The
+  usage is the protocol's major version, so only boards of this major are
+  found. A board is bound by the ID in its `HELLO` reply.
+- `negotiate` is the handshake. It confirms the major version, checks
+  `HELLO`'s capability bitmaps for what the bridge uses, and reads the pages
+  once.
+- `HostLightingCapabilities` is the result. Each property answers one question
+  from a call site. `refresh` reads the Summary and then only the pages whose
+  change counter moved.
+- `decode_hello`, `decode_page_header` and `decode_records` decode the
+  replies, field group by field group. They are pure functions over a 64-byte
+  report.
+- `send`, `request`, `drain` and `wait_reply` are the transport. Every
+  application with the interface open receives every reply and event. The
+  reports already waiting are read before each request, and events are kept.
+  A reply is matched by its command, its sequence and, for `GET_PAGE` and
+  `CLAIM`, what it echoes.
+- `entry_payloads` and `run_payloads` encode `STAGE`, for entries addressed by
+  action, kind or light ordinal, and for LED runs.
 
-Then **`bridge.py`**, which is where the protocol meets the loop:
+Then `bridge.py`:
 
-- `staging_for` - decides how each of the profile's targets reaches the board's
-  lights, once, at connect. This is where a control name becomes one entry or
-  several, and where an `index` becomes an ordinal.
-- `send_frame` and `stage_group` - the passes that put a frame on the wire. The
-  order they are emitted in is load-bearing and the docstring says why.
-- `run` - the loop itself, and the housekeeping around it: the keepalive, the
-  five-second LED-map check, and what happens when any of it goes wrong.
+- `LightsClaim` is the claim on the board's lights: take, renew, lose, wait,
+  take again, give up. It also sends `CONFIGURE`, since a change of holder
+  resets the settings.
+- `staging_for` decides how each of the profile's targets reaches the board's
+  lights, at connect and again when the board's configuration changes. A
+  control name becomes an entry by action or kind, and an `index` becomes a
+  light ordinal.
+- `send_frame` emits the passes that put a frame on the wire. Their order must
+  be kept, as its docstring describes.
+- `run` is the loop and its housekeeping: renewing the claim, watching the
+  board's state, and handling failures.
 
-**`profile.py`** and **`spiceapi.py`** are small and self-contained; read them
-when you need them.
+`profile.py` and `spiceapi.py` are small and self-contained.
 
-## Ideas worth having straight
+## Concepts
 
-**A target is not a light.** `('button', 4)` names a control and lets the board
-resolve it. `('light', 0, 1)` names one light of a control by position in the
-board's own table. `('range', 16, 30)` names raw LED indexes. They differ in how
-portable they are and in how they fail, which `profiles/README.md` covers.
+### Targets
 
-**A frame is control-level; staging is board-level.** `profile.resolve_frame`
-produces targets and colours knowing nothing about the attached board.
-`bridge.staging_for` then works out what each target means for *this* board.
-Keeping that boundary is what lets one profile work across layouts, and it is why
-expansion cannot be baked into profile loading.
+A target is not a light. `('button', (6, 5))` names a control by the
+addressing mode and address `STAGE` reaches it by, here action 5, B1. The
+board resolves it. `('light', (6, 1), 1)` names one light of a control by its
+position in the board's Lights page. `('range', 16, 30)` names raw LED
+indexes. The three differ in portability and in how they fail, which
+`profiles/README.md` covers.
 
-**Capability, not version.** Call sites ask
-`caps.per_light` rather than `caps.minor >= 2`. A later protocol version should
-be one new property here, not a new comparison at every branch.
+### Frames and staging
 
-**The staging buffer outlives a frame, and a session.** The board holds staged
-pixels until something overwrites them, so a target that leaves the frame has to
-be cleared, and a run has to start from a known state rather than inheriting
-whatever the last one left.
+A frame is at the level of controls, and staging is at the level of the
+board. `profile.resolve_frame` produces targets and colours without knowledge
+of the attached board. `bridge.staging_for` then resolves each target for
+that board. This boundary lets one profile work across layouts.
 
-## Where the vendored client came from
+### Capabilities
 
-`hlp.py` began as a trimmed copy of the Host Lighting helpers proposed for
-gp2040ce-binary-tools in [PR #12](https://github.com/OpenStickCommunity/gp2040ce-binary-tools/pull/12), vendored so the bridge needs
-nothing but `hidapi`. The framing, decoders and class names still follow those
-helpers, so a fix in one carries over to the other. The capability layer -
-`negotiate` and `HostLightingCapabilities` - and the timeout and disconnect
-handling are this project's own, so the module is no longer a drop-in for
-`gp2040ce_bintools.hostlighting`.
+`HELLO` says which commands, pages, request flags, addressing modes, pixel
+formats and events a board implements. The bridge checks those. The minor
+version is printed and never compared.
+
+### The claim
+
+The claim is a lease, and its generation travels on every request. Only the
+holder's own `CLAIM` renews it. When the holder changes, the board steps the
+generation and refuses every request still carrying the old one, so a host
+that has not seen the change cannot stage over the new holder's frame. One
+`CLAIM` answers every case: still held, lapsed and taken again, or taken over
+by another application.
+
+### The staged frame
+
+The staged frame lasts as long as the takeover. The board keeps staged pixels
+until they are overwritten, so a target that leaves the frame is cleared.
+When the takeover ends or the holder changes, the board clears the staged
+frame, and the bridge stages the whole frame again.
+
+## Origin of the client
+
+`hlp.py` follows the Host Lighting helpers proposed for gp2040ce-binary-tools
+in [PR #12][pr-12], the protocol's reference host. It is kept as its own
+module so the bridge needs only `hidapi`. The framing, the reply matching and
+the decoders follow those helpers, so a fix in one applies to the other. The
+capability layer (`negotiate` and `HostLightingCapabilities`) and the timeout
+and disconnect handling are this project's own, so the module is not a
+drop-in for `gp2040ce_bintools.hostlighting`.
 
 ## Testing a change
 
-`tests/README.md` covers the suite and the checks that need a board. The short
-version: `pytest` proves a change against all five protocol versions with no
-hardware, and `python -m tests.hardware_sweep` confirms it on a real one.
+`tests/README.md` covers the suite and the checks that need a board. `pytest`
+tests a change against a fake board, and `python -m tests.hardware_lights`
+confirms it on a real one.
+
+[pr-12]: https://github.com/OpenStickCommunity/gp2040ce-binary-tools/pull/12

@@ -1,133 +1,141 @@
 # hlp-spice2x
 
-Drive a [GP2040-CE](https://github.com/OpenStickCommunity/GP2040-CE) controller's
-RGB LEDs from the cabinet lighting of games running under
-[spice2x](https://github.com/spice2x/spice2x.github.io).
+hlp-spice2x drives the RGB LEDs of a [GP2040-CE][gp2040-ce] controller from
+the cabinet lighting of games running under [spice2x][spice2x].
 
-spice2x reports every light the running game drives through its Spice API. This
-polls that list and paints the matching buttons on your board, so an IIDX or
-SDVX cabinet's lighting shows up on your controller.
+spice2x reports every light the running game drives through its Spice API.
+The bridge polls that list and colours the matching controls on the board, so
+the lighting of an IIDX or SDVX cabinet shows on the controller.
 
 ## How it works
 
 The board's Host Lighting add-on exposes a vendor HID interface carrying the
-Host Lighting Protocol, which lets a host take over the LEDs frame by frame.
-The bridge sits between the two:
+Host Lighting Protocol (HLP), which lets a host take over the LEDs frame by
+frame. The bridge sits between the game and the board.
 
 ```
 spice2x  --(Spice API, TCP/JSON)-->  hlp-spice2x  --(HID)-->  GP2040-CE board
 ```
 
-Mapping game lights to your buttons lives in a **profile**, a JSON file, because
-light names differ from game to game. Profiles name *controls* (`B1`, `S2`,
-`Up`), not LED indexes: the board reports its own button-to-LED map, and the
-firmware resolves the control to whatever LEDs that user actually wired. One
-profile therefore works across board layouts.
+A **profile** is a JSON file that maps the game's lights to the board's
+controls. Light names differ from game to game, so each game has its own
+profile. A profile names controls (`B1`, `S2`, `Up`) and not LED indexes. The
+bridge stages a colour by the control's name and the firmware resolves it to
+the LEDs that board has for it, so one profile works across board layouts.
 
-## A worked example of the protocol
+This version speaks HLP 2.0 only. A board on the pre-release 1.x protocol
+needs [hlp-spice2x v0.3.0][v0.3.0] or a firmware update. See
+[Protocol version](#protocol-version).
 
-This bridge doubles as a real-world example of implementing Host Lighting
-Protocol support in a host application, for anyone adding HLP to their own
-tooling for GP2040-CE based controllers. It is a working tool first, but it was
-built against the whole protocol rather than the parts one program happens to
-need, and it drives every shipped version - v1.0 through v1.4 - from one code
-path, deciding what a board can do by asking it.
+## Example host implementation
 
-The parts worth reading, in the order a host has to do them:
+The bridge is also an example of Host Lighting Protocol support in a host
+application. It follows the protocol's whole host flow. It claims the board,
+shares it with other applications, and follows changes to the board's
+configuration.
+
+The parts to read, in the order a host does them:
 
 | Where | What it shows |
 |---|---|
-| `hlp_spice2x/hlp.py` | The wire format: report framing, sequence matching, every capability page decoded field by field, and the staging commands each version added |
-| `hlp.negotiate` | Reading the version and the capability pages once, at connect, and refusing an unknown major version rather than driving it on assumptions that may no longer hold |
-| `hlp.HostLightingCapabilities` | Turning a version and a feature bitmask into questions a call site can ask, so a later protocol version is one new field here rather than a hunt for version comparisons |
-| `bridge.staging_for` | Choosing how each target reaches the board's lights, and what it falls back to when the newest command is not available |
-| `bridge.send_frame` | The staging passes, and why the order they are emitted in is load-bearing |
-| `tests/fake_board.py` | A board fake parameterised by protocol version, which gates its own replies the way firmware does, so every version can be tested without five boards |
+| `hlp_spice2x/hlp.py` | The wire format: report framing, request flags, reply matching when other applications' replies arrive, `HELLO`, the page decoders by field group, and the `STAGE` encoders |
+| `hlp.negotiate` | Confirming the major version, checking `HELLO`'s capability bitmaps for what is used, and reading the pages once at connect |
+| `hlp.HostLightingCapabilities` | Answering call sites from the pages, and reading again only the pages whose change counter moved |
+| `bridge.LightsClaim` | The claim: taking it, renewing it, losing it to another application, waiting, and sending `CONFIGURE` again when it is taken again |
+| `bridge.staging_for` | How each target reaches the board's lights: by action, by kind, by light ordinal or as an LED run |
+| `bridge.send_frame` | A frame as reports sent with `NO_REPLY` and one answered report carrying `COMMIT_AFTER`, and the order of the passes |
+| `tests/fake_board.py` | A fake board parameterised by capabilities that keeps the state the protocol gives a board, so the host flow is tested without hardware |
 
-Four things the protocol rewards, learned building this:
+What a host on this protocol does:
 
-- **Negotiate once, at connect, and freeze the result.** Re-deriving what a board
-  can do inside a streaming loop spends round trips on an answer that cannot have
-  changed without the board saying so.
-- **Branch on capabilities, not on version numbers.** Three of the capabilities
-  here deliberately do not follow from the version: the light and control tables
-  need a feature bit as well, and a host-supplied white component needs the LED
-  chain to have somewhere to put it.
-- **Give every capability a fallback.** The same profile has to work on a v1.0
-  board, just with less finesse.
-- **Clamp a newer minor version rather than refusing it.** Within a major version
-  the protocol only ever adds, so a board newer than your client still keeps
-  every promise your client relies on. Refusing it strands the user on firmware
-  that is better at everything they asked for.
+- It gates on capabilities and never on the version. `HELLO` lists the
+  commands, pages, request flags, addressing modes, pixel formats and events
+  a board implements. The minor version decides nothing.
+- It claims the board before driving it. The claim keeps applications sharing
+  a board apart, and its generation lets the board refuse a host that has not
+  yet seen a change of holder.
+- It lets the board resolve names. `STAGE` by action reaches every light of a
+  control, so a host that names only controls needs no table of LEDs.
+- It watches the state token. The token changes whenever the board's lights
+  or controls do, and the Summary's change counters name the pages to read
+  again.
 
-The protocol itself is specified in
-[docs/host-lighting.md](https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v1.4/docs/host-lighting.md).
+The protocol is specified in [docs/host-lighting.md][spec].
+[gp2040ce-binary-tools][binary-tools] holds the reference host, whose framing
+and decoders this one follows.
 
 ## Requirements
 
-- A GP2040-CE board running firmware with the **Host Lighting** add-on, enabled
-  in the web configurator (Configuration -> Add-Ons -> Host Lighting; off by
-  default). Not in an official release yet - see [Firmware](#firmware).
-- spice2x started with `-api PORT`, plus `-apipass PASS` if you set a password
-- Python 3.9 or later
+- A GP2040-CE board running firmware with the Host Lighting add-on, enabled
+  in the web configurator under Configuration, Add-Ons, Host Lighting. The
+  add-on is off by default and is not in an official release yet. See
+  [Firmware](#firmware).
+- spice2x started with `-api PORT`, and with `-apipass PASS` where a password
+  is wanted.
+- Python 3.9 or later.
 
 ## Firmware
 
-Host Lighting is a proposed add-on rather than a shipped feature. It is open
-upstream as
-[PR #1691](https://github.com/OpenStickCommunity/GP2040-CE/pull/1691), so until
-that merges you need a test build:
+Host Lighting is a proposed add-on, open upstream as [PR #1691][pr-1691].
+Until it merges the board needs a test build. This version was written
+against the [HLP v2.0 release candidate 7 test builds][rc7].
 
-**[HLP v1.4 test builds](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.4)**
-- the current release, and the one to use
+There is a UF2 for every board GP2040-CE supports, with flashing and setup
+instructions. Enable the add-on in the web configurator once the board runs
+one of them.
 
-There is a UF2 for every board GP2040-CE supports, on the merged LED pipeline,
-along with flashing and setup instructions. Enable the add-on in the web
-configurator once the board is running one of them.
+HLP v2.0 release candidates 1 to 4 have a fault that release candidate 5 and
+later fix. The first boot after a firmware update can start the board in a
+boot hotkey's input mode or in the web configurator with no button held.
 
-Earlier releases are kept because the bridge supports all of them, and because
-they are what makes each version gate testable on real hardware rather than only
-against a fake:
-[v1.3](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.3) |
-[v1.2](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.2) |
-[v1.1](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.1) |
-[v1.0](https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.0)
+HLP 2.0 is a release candidate, so this version of the bridge is a
+pre-release until the protocol is final.
 
-The protocol itself is documented in
-[docs/host-lighting.md](https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v1.4/docs/host-lighting.md).
+## Protocol version
 
-## Protocol versions
+The bridge speaks HLP 2.0. It finds a board by the protocol's USB usage, which
+carries the major version, and confirms the version with `HELLO`. It decides
+everything else from the capabilities the board lists.
 
-The bridge speaks every shipped version of the Host Lighting Protocol and works
-out which one it is talking to at connect, so the same profile and the same
-command line work on any of them. What differs is how much finesse is available.
+| The board lists | What the bridge does with it |
+|---|---|
+| `CLAIM`, `CONFIGURE`, `STAGE`, `CLEAR`, the request flags, and pages 1, 8 and 11 | Required. Without them the bridge stops and names what is missing. |
+| The addressing modes | Required as the profile uses them. A control name is staged by action. `CASE`, `TURBO` and `PLED1`-`PLED4` are staged by kind, an `index` by light and a `range` as an LED run. |
+| Page 10, the controls | The startup warnings tell a mapped control the board does not have from one it has with no LED. |
+| `SUBSCRIBE` and the `STATE_CHANGED` event | The bridge learns of a change on the board from an event. Without them it reads page 1 every 5 s. |
+| The RGBW pixel format, on a GRBW or RGBW chain | A white component in a profile colour is sent. |
 
-| Version | What the board gains | What the bridge does with it |
-|---|---|---|
-| v1.0 | the baseline | Control names and raw LED ranges. Finds out which controls have lights by writing a black frame to each and seeing what sticks. |
-| v1.1 | the light table, the reported render rate | Reads which controls have lights instead of probing for them, streams at the board's own rate, and lights **every** light of a control that has more than one. |
-| v1.2 | colouring a single light by its ordinal | The `index` profile entry. Extended controls (`A3`, `A4`, `E1`-`E12`) stage by name. |
-| v1.3 | a per-entry outcome mask, and the RGBW form of per-light staging | Notices when the board skipped a light and re-reads its map, and honours a white component in a profile colour. |
-| v1.4 | the control table: every control the board has, lit or not | Tells a mapped control the board does not have apart from one it has with no LED, in the startup warnings. |
+A later 2.x board is driven the same way, by what it lists.
 
-A board reporting a **newer minor version** than this bridge knows is driven as
-the newest it does know, never refused: within a major version the protocol only
-ever adds, so such a board still keeps every promise being relied on.
+This version does not find firmware on the pre-release 1.x protocol. If such
+a board is attached, the bridge reports it. Update the board to an HLP 2.0
+build, or use hlp-spice2x v0.3.0 with it, which speaks v1.0 to v1.4.
 
-A board reporting a **different major version** is refused, because a major
-version is the one thing allowed to change what existing commands mean. `--force`
-overrides that for testing, behind a warning that the run is not reliable.
-
-The negotiated result is printed at startup, so what the bridge decided is
-visible rather than guessed at:
+The bridge prints what it read at startup. This example is from a Haute42
+COSMOX M Ultra:
 
 ```
-board: Haute42 COSMOX M Ultra (v0.7.12-87-g6ed54b5)
-board speaks HLP v1.4 - light table, control table, per-light staging, outcome mask, renders at 40 Hz (white channel: no)
+board: Haute42 COSMOX M Ultra (v0.7.12-144-g78fa288)
+board speaks HLP v2.0: 46 lights on 46 LEDs, renders at 40 Hz, GRB chain (white channel: no), state changes by event
 takeover: whole frame, 2000 ms keepalive, applying board brightness
 controls the board gives more than one light, all of which will be lit: L3, Up
 streaming at 40 fps (matching the board's render rate)
 ```
+
+## Sharing a board
+
+Several applications can have a board's lighting interface open at once. They
+coordinate through the protocol's claim.
+
+- At startup the bridge claims the lights under the name `hlp-spice2x`. If
+  another application holds them, it stops and names that application. Close
+  that application, or pass `--force` to take the lights over from it.
+- While it runs it renews the claim several times per keepalive timeout.
+- If another application takes the lights over, the bridge reports it, stops
+  sending frames, and waits. When the board is unclaimed again, the bridge
+  claims the lights and carries on.
+- When it stops it gives the claim up, and the board returns to its own
+  animations at once.
 
 ## Install
 
@@ -137,35 +145,39 @@ pip install git+https://github.com/djGLiTCH/hlp-spice2x
 
 ## Quick start
 
-With the game running, see what lights it exposes:
+With the game running, list the lights it exposes:
 
 ```
 hlp-spice2x --port 1337 --list-lights
 ```
 
-Generate a profile skeleton listing every one of them:
+Write a profile skeleton listing every one of them:
 
 ```
 hlp-spice2x --port 1337 --write-profile iidx.json
 ```
 
-Open `iidx.json` and fill in the `button` field for each light you care about,
-leaving the rest empty. Then run the bridge:
+Open `iidx.json` and fill in the `button` field of each light to map. Leave
+the rest empty. Then run the bridge:
 
 ```
 hlp-spice2x --port 1337 --profile iidx.json
 ```
 
-Press Ctrl-C to stop, or close the game: either way the board is handed back to
-its own animations. If the bridge is killed outright, the board takes itself
-back within two seconds.
+Press Ctrl-C to stop, or close the game. Both return the board to its own
+animations. If the bridge is killed, the board restores its animations when
+the keepalive timeout ends, 2 s by default.
 
-The run reports what it negotiated, warns about anything in the profile this
-board cannot light, and prints a summary when it stops:
+If the board leaves the bus, as it does when another application or the web
+configurator reboots it, the bridge reports it and waits. When the board
+returns, the bridge starts again on it.
+
+The run reports what it read from the board, warns about anything in the
+profile this board cannot light, and prints a summary when it stops:
 
 ```
-1185 frames in 29.6s (40.0/s published), 0 commits unacknowledged
-released - on-board animations restored
+1185 frames in 29.6s (40.0/s published), 0 frames unacknowledged
+claim given up, on-board animations restored
 ```
 
 ## Profile format
@@ -180,75 +192,68 @@ released - on-board animations restored
 }
 ```
 
-- **`button`** names a control: `Up Down Left Right B1 B2 B3 B4 L1 R1 L2 R2 S1
-  S2 L3 R3 A1 A2`, plus `PLED1`-`PLED4`, `TURBO` and `CASE` for the whole case
-  strip. `A3`, `A4` and `E1`-`E12` are also accepted on boards whose firmware
-  reports them, which needs HLP v1.1 or newer. Leave it empty to ignore that
-  light. Where the board says a control owns several lights, such as a layout
-  with two Up buttons, all of them are lit.
-- **`index`** picks out one light of a control, counting as the board's own
-  light table lists them, so `{ "button": "UP", "index": 1 }` is the second Up
-  button on a layout that has two. It needs HLP v1.2 or newer. On older
-  firmware, or where the board's table cannot say which lights belong to that
-  control, the bridge refuses to start rather than lighting something else. A
-  board that simply has not published its table yet is a different case: those
-  entries are held back with a warning and resolve on their own once it
-  appears.
-- **`range`** addresses raw LED indexes as `[start, count]`, for lights that do
-  not correspond to a control. Unlike `button`, this is tied to the board it was
-  written for.
-- **`colour`** is `RRGGBB` hex, scaled by how brightly the game is driving that
-  light. `color` is accepted too. Defaults to white. Eight digits as `RRGGBBWW`
-  asks for the board's white channel, which needs a GRBW or RGBW chain and HLP
-  v1.3; anywhere else the white is dropped, the colour is sent as RGB, and the
-  reason is printed once at startup.
+- `button` names a control: `Up Down Left Right B1 B2 B3 B4 L1 R1 L2 R2 S1
+  S2 L3 R3 A1 A2 A3 A4` and `E1`-`E12`. `PLED1`-`PLED4`, `TURBO` and `CASE`
+  name the player LEDs, the turbo lights and the case strip. An empty
+  `button` ignores that light. Where a control has several lights, such as a
+  layout with two Up buttons, all of them are lit.
+- `index` picks one light of a control, counting as the board's Lights page
+  lists them. `{ "button": "UP", "index": 1 }` is the second Up button on a
+  layout that has two. Where the control has no such light, the bridge does
+  not start.
+- `range` addresses raw LED indexes as `[start, count]`, for lights that
+  belong to no control. It is tied to the board it was written for.
+- `colour` is `RRGGBB` hex, scaled by how brightly the game drives that
+  light. `color` is accepted too. The default is white. Eight digits as
+  `RRGGBBWW` ask for the board's white channel, which needs a GRBW or RGBW
+  chain. On any other chain the white is dropped, the colour is sent as RGB,
+  and the reason is printed once at startup.
 
-The three forms differ in how portable they are. A `button` entry works on any
-board. An `index` entry names a portable control but picks a light by a position
-only that board's light table defines, so it may pick a different light
-elsewhere. A `range` entry is raw LED indexes and is portable nowhere.
+The three forms differ in how portable they are:
 
-Cabinet lights are mostly single-colour, so the game only reports an intensity
-from 0.0 to 1.0 - the colour is your choice. Two lights mapped to the same
-control add together and clamp.
+| Form | Portability |
+|---|---|
+| `button` | Works on any board. |
+| `index` | The control is portable. The light it picks depends on that board's Lights page. |
+| `range` | Tied to one board. |
+
+Cabinet lights are mostly single-colour, so the game reports an intensity
+from 0.0 to 1.0 and the profile supplies the colour. Two lights mapped to the
+same control add together and clamp.
 
 ## Options
 
 | Option | Effect |
 |---|---|
-| `--port N` | The port you passed to spice2x's `-api`. 1337 by convention, but spice2x has no default of its own. |
-| `--password PASS` | Matches spice2x's `-apipass`. Required if you set one, since the traffic is then encrypted. |
-| `--host ADDR` | Where spice2x is listening, default `127.0.0.1`. Only needed if the game runs on a different machine from the board. |
-| `--overlay` | Paint only the mapped controls and let everything else keep animating. Without it the whole frame is taken and unmapped LEDs go dark. |
+| `--port N` | The port passed to spice2x's `-api`. 1337 is the usual choice. spice2x has no default. |
+| `--password PASS` | Matches spice2x's `-apipass`. Required where one is set, since the traffic is then encrypted. |
+| `--host ADDR` | Where spice2x listens, default `127.0.0.1`. Needed only when the game runs on another machine. |
+| `--overlay` | Colour only the mapped controls and leave the rest animating. Without it the whole frame is taken and unmapped LEDs are off. |
 | `--full-brightness` | Ignore the board's configured brightness and render the colours the game asks for. |
-| `--fps N` | Poll rate. Defaults to the board's own render rate where it reports one slower than 60, and to 60 otherwise. Passing this overrides both. |
-| `--list-boards` | List the attached boards - factory ID, label, protocol version and firmware - and exit. Takes no board over and needs no game. |
-| `--board-id PREFIX` | Pick one of several connected boards, by the prefix of its factory ID. `--list-boards` shows the IDs. |
-| `--dry-run` | Print frames instead of driving a board. Never opens the HID interface. |
-| `--timeout MS` | Takeover keepalive, default 2000 ms. The board restores its animations if it stops hearing from the host for this long. |
-| `--force` | Run against a protocol major version this bridge does not support. Unsupported and for testing only; commands may not mean what the bridge thinks they mean. |
+| `--fps N` | Poll rate. The default is the board's render rate, up to 120. Where the board states none it is 60. |
+| `--list-boards` | List the attached boards by factory ID, label, protocol version and firmware, then exit. Takes no board over and needs no game. |
+| `--board-id PREFIX` | Pick one of several connected boards by the prefix of its factory ID. `--list-boards` shows the IDs. |
+| `--dry-run` | Print frames and drive no board. The HID interface is not opened. |
+| `--timeout MS` | Keepalive timeout, 100 to 10000 ms, default 2000. The board restores its animations when it hears nothing from the host for this long. |
+| `--force` | Take the board's lights over from another application that holds them. Without it the bridge stops. See [Sharing a board](#sharing-a-board). |
 
-`--list-lights`, `--write-profile` and `--dry-run` talk to spice2x alone, so you
-can build and check a profile on the game PC with no board attached. A dry run
-has no light table to resolve an `index` entry against, so it shows those
+`--list-lights`, `--write-profile` and `--dry-run` talk to spice2x alone, so a
+profile can be built and checked on the game PC with no board attached. A dry
+run has no board to resolve an `index` entry against, so it shows those
 entries as the profile wrote them, such as `Up[1]`. `--list-boards` talks to
 the boards alone.
 
 ## Notes
 
-Frames are only sent when something actually changes. While nothing does, a
-keepalive every half timeout holds the takeover instead. Against a stand-in
-server with static lighting, 703 polls produced one board update.
+Frames are sent only when something changes. While nothing does, the bridge
+renews the claim every third of the keepalive timeout, which holds the
+takeover.
 
-Streaming faster than the board renders is wasted work, so the bridge matches a
-board that reports a slower rate and caps a faster one at 60: cabinet lighting
-gains nothing visible above that, and the headroom is worth more than the rate
-when a poll runs late.
+The bridge streams at the board's render rate, up to 120 frames per second.
 
-The bridge does not use spice2x's built-in HID lights feature. That expects a
-device declaring its lights in its HID descriptor, which cannot describe a board
-whose LED map the user configures. Going through the Spice API instead is what
-lets one profile work on any board.
+The bridge does not use spice2x's built-in HID lights feature. That feature
+expects a device declaring its lights in its HID descriptor, which cannot
+describe a board whose LED map the user configures.
 
 ## Tests
 
@@ -257,39 +262,47 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite covers all five protocol versions without needing a board, by running
-the real client against a fake that is parameterised by version and gates its own
-replies the way firmware does.
+The suite needs no board. It runs the real client against a fake board that
+is parameterised by what a board lists in `HELLO` and keeps the state the
+protocol gives a board.
 
-There are also checks that need a board, for confirming behaviour on real
-hardware: what a board reports about itself, whether each light is addressed
-correctly, whether the staging order holds, and whether the whole program works
-driven from its own entry point.
+Some checks need a board. They show what a board reports about itself,
+whether each light is addressed correctly, whether the staging order holds,
+and whether the whole program works from its own entry point.
 
 ```
 python -m tests.hardware_probe        # read-only, safe to run mid-game
-python -m tests.hardware_sweep        # eleven phases, watched by eye
+python -m tests.hardware_lights        # eleven phases, watched by eye
 ```
 
-[tests/README.md](tests/README.md) explains what every test file is for, when to
-reach for it, and how to run it.
+[tests/README.md](tests/README.md) describes each test file and how to run
+it.
 
 ## Contributing profiles
 
-Profiles for real games are welcome. Generate one with `--write-profile`, fill
+Profiles for real games are welcome. Write one with `--write-profile`, fill
 it in, check it with `--dry-run`, and open a pull request adding it to
-`profiles/`. Please say which game and version it was captured from.
+`profiles/`. State the game and version it was captured from.
 
 ## Changelog
 
-What changed in each release, and anything that needs action when upgrading:
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](CHANGELOG.md) lists what changed in each release and anything
+that needs action when upgrading.
 
 ## Licence
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
 
-`hlp_spice2x/hlp.py` began as a trimmed copy of the Host Lighting helpers
-proposed for gp2040ce-binary-tools in [PR #12](https://github.com/OpenStickCommunity/gp2040ce-binary-tools/pull/12), vendored so this tool
-needs nothing but `hidapi`. It has since grown the capability negotiation the
-bridge relies on, which those helpers do not have.
+`hlp_spice2x/hlp.py` follows the Host Lighting helpers proposed for
+gp2040ce-binary-tools in [PR #12][pr-12]. It is kept as its own module so this
+tool needs only `hidapi`. The capability layer and the timeout and disconnect
+handling are this project's own.
+
+[gp2040-ce]: https://github.com/OpenStickCommunity/GP2040-CE
+[spice2x]: https://github.com/spice2x/spice2x.github.io
+[v0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.3.0
+[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc7/docs/host-lighting.md
+[binary-tools]: https://github.com/OpenStickCommunity/gp2040ce-binary-tools
+[pr-1691]: https://github.com/OpenStickCommunity/GP2040-CE/pull/1691
+[rc7]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc7
+[pr-12]: https://github.com/OpenStickCommunity/gp2040ce-binary-tools/pull/12

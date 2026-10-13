@@ -33,15 +33,15 @@ def profile_file(tmp_path, lights=None):
 
 
 def test_zero_fps_is_rejected(tmp_path):
-    """Test that --fps 0 is refused rather than dividing by zero."""
+    """Test that --fps 0 is refused."""
     with pytest.raises(SystemExit) as caught:
         main(['--profile', profile_file(tmp_path), '--fps', '0'])
     assert caught.value.code == 2
 
 
-@pytest.mark.parametrize('timeout', ['50', '70000'])
+@pytest.mark.parametrize('timeout', ['99', '10001'])
 def test_out_of_range_timeout_is_rejected(tmp_path, timeout):
-    """Test that a timeout outside the 16-bit field's usable range is refused."""
+    """Test that a timeout outside the range the firmware clamps to is refused."""
     with pytest.raises(SystemExit) as caught:
         main(['--profile', profile_file(tmp_path), '--timeout', timeout])
     assert caught.value.code == 2
@@ -122,19 +122,59 @@ def test_list_boards_names_each_board_and_needs_no_game(monkeypatch, capsys):
 
     monkeypatch.setattr('hlp_spice2x.__main__.SpiceConnection', no_game)
     attach(monkeypatch,
-           FakeBoard(version=(1, 4), board_id='433030343237362E', label='Haute42 COSMOX M Ultra',
+           FakeBoard(board_id='433030343237362E', label='Haute42 COSMOX M Ultra',
                      firmware='v0.7.12'),
-           FakeBoard(version=(1, 4), board_id='433031343539302E', label='Haute42 COSMOX',
+           FakeBoard(board_id='433031343539302E', label='Haute42 COSMOX',
                      firmware='v0.7.12'))
     assert main(['--list-boards']) == 0
     out = capsys.readouterr().out
-    assert '433030343237362E  Haute42 COSMOX M Ultra  HLP v1.4  v0.7.12' in out
-    assert '433031343539302E  Haute42 COSMOX          HLP v1.4  v0.7.12' in out
+    assert '433030343237362E  Haute42 COSMOX M Ultra  HLP v2.0  v0.7.12' in out
+    assert '433031343539302E  Haute42 COSMOX          HLP v2.0  v0.7.12' in out
     assert '--board-id' in out
+    assert 'another protocol major' not in out
+
+
+def test_list_boards_says_when_a_board_speaks_another_major(monkeypatch, capsys):
+    """Test that a 1.x board beside a 2.0 one is mentioned, since it is not listed."""
+    attach(monkeypatch, FakeBoard(), other_majors=[0x4C])
+    assert main(['--list-boards']) == 0
+    out = capsys.readouterr().out
+    assert '1 board(s):' in out
+    assert '1 Host Lighting interface(s) found speaking another protocol major' in out
+    assert 'hlp-spice2x v0.3.0' in out
 
 
 def test_list_boards_with_none_attached_points_at_the_firmware(monkeypatch, capsys):
     """Test that an empty listing fails and says where to get firmware."""
     attach(monkeypatch)
     assert main(['--list-boards']) == 1
-    assert 'releases/tag/HLP_v1.4' in capsys.readouterr().err
+    assert 'releases/tag/HLP_v2.0-rc7' in capsys.readouterr().err
+
+
+def test_the_bridge_runs_from_the_command_line_against_a_board(server, tmp_path, monkeypatch, capsys):
+    """Test the whole path from the arguments to giving the claim up."""
+    board = FakeBoard()
+    attach(monkeypatch, board)
+    stub = server
+
+    import threading
+    import time
+    threading.Thread(target=lambda: (time.sleep(0.4), stub.stop()), daemon=True).start()
+    assert main(['--port', str(stub.port), '--profile', profile_file(tmp_path), '--overlay',
+                 '--timeout', '3000']) == 0
+    out = capsys.readouterr().out
+    assert 'takeover: overlay, 3000 ms keepalive' in out
+    assert 'claim given up, on-board animations restored' in out
+    assert board.frames and board.frames[0] == {4: (255, 0, 0)}
+    assert board.holder == 0 and board.closed
+
+
+def test_a_board_held_by_another_application_is_an_error_naming_it(server, tmp_path, monkeypatch,
+                                                                   capsys):
+    """Test that the run stops with status 1 and the holder's name, and closes the board."""
+    board = FakeBoard()
+    board.take_over(name='MESH')
+    attach(monkeypatch, board)
+    assert main(['--port', str(server.port), '--profile', profile_file(tmp_path)]) == 1
+    assert "'MESH' holds this board's lights" in capsys.readouterr().err
+    assert board.closed and board.holder != 0

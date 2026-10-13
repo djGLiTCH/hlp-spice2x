@@ -1,15 +1,14 @@
 # Tests
 
-Two kinds of thing live here, and they answer different questions.
+This directory holds automated tests and hardware checks.
 
-The **automated tests** run under pytest, need no hardware, and answer "does the
-code still do what it is supposed to". Run them constantly.
+The automated tests run under pytest and need no hardware. They show that the
+code does what it is meant to.
 
-The **hardware checks** need a board plugged in, take its lighting over while
-they run, and answer "does this board actually behave the way the protocol says".
-Run them when you change staging, when you meet a board that behaves oddly, or
-when you are implementing Host Lighting support of your own and want to see what
-a board really reports.
+The hardware checks need a board attached and take its lighting over while
+they run. They show that a board behaves as the protocol says. Run them after
+a change to staging, against a board that behaves unexpectedly, or to see
+what a board reports when implementing Host Lighting support in another host.
 
 ## Running the automated tests
 
@@ -18,182 +17,191 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Nothing in the automated suite touches USB, so it is safe to run with a board
-attached and a game running.
+The automated suite does not touch USB, so it can run with a board attached
+and a game running.
 
-The hardware checks are named `hardware_*.py` rather than `test_*.py`, so pytest
-never collects them, and importing one does nothing until you call it.
+The hardware checks are named `hardware_*.py`, so pytest does not collect
+them, and importing one runs nothing.
 
 ## The automated tests
 
 | File | What it covers |
 |---|---|
-| `test_hlp_decoders.py` | The capability page decoders and the per-light staging commands, as pure functions over hand-built 64-byte replies. Hand-built on purpose: decoding a reply the fake board generated would test the fake as much as the decoder. Also the probe's control-table checks, and the whole probe run against the fake for its exit code. |
-| `test_version_policy.py` | What the bridge agrees to at connect across v1.0 to v1.4, the clamping of an unknown minor, the refusal of an unknown major, and `--force`. Also that a page 6 read which fails costs neither the connect nor the light table. |
-| `test_staging.py` | How a frame reaches the board's lights: control names, the expansion to all of a control's lights, per-light targeting by index, raw ranges, the white channel, and the order the passes are emitted in. Also the startup check that names controls the board lacks or cannot light. |
-| `test_loop_resilience.py` | That a bad reply does not end a working run, and that a board going away still does. Covers the LED-map poll, the keepalive, the staging receipts read back from v1.3 firmware, and a receipt that arrives truncated rather than not at all. Also that startup clears the staging buffer, so a previous session's pixels are not inherited. |
+| `test_hlp_decoders.py` | The framing, the `HELLO` and page decoders and the `STAGE` encoders, as pure functions over 64-byte reports built by hand. The fixtures are the protocol reference's worked examples. |
+| `test_capabilities.py` | What the bridge agrees to at connect: the major version, each capability it needs and each it can do without, the minor version gating nothing, and reading again only the pages whose change counter moved. |
+| `test_staging.py` | How a frame reaches the board's lights: control names by action, the case strip by kind, one light by index, raw ranges, the white channel, the order the passes are emitted in, and which report is answered. Also the startup check that names controls the board lacks or cannot light. |
+| `test_loop_resilience.py` | The run loop against a board that changes, is shared, or stops answering: the claim and its renewal, another application taking the lights over and giving them up, a lapsed claim, a takeover that ended, a configuration change, an unacknowledged frame, and a board that leaves the bus and returns. |
 | `test_profile.py` | Profile parsing and frame resolution. |
-| `test_cli.py` | Argument handling, `--list-boards`, and the paths that exit before connecting to anything. |
-| `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection rather than per message, NUL framing across repeated calls, and a game that hangs up surfacing as a ConnectionError, which the bridge relies on to treat a closed game as a normal ending. |
-| `test_device_errors.py` | Telling a late reply apart from a device that has gone away, and finding the right board when several are attached. |
+| `test_cli.py` | Argument handling, `--list-boards`, and the paths that exit before connecting. |
+| `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection, NUL framing across repeated calls, and a game that closes the connection raising a ConnectionError, which the bridge treats as a normal ending. |
+| `test_device_errors.py` | The transport: telling a late reply from a device that has gone away, telling a reply from another application's, keeping an event that arrives ahead of a reply, the claim generation on every request, and finding the right board when several are attached. |
+| `test_hardware_checks.py` | The hardware checks below, run against the fake board: the probe and its table checks, the whole lights check on a clock that does not wait, and the profile the end-to-end check writes. |
 
 ## The fake board
 
-`fake_board.py` is the piece most likely to be useful outside this project.
+`fake_board.py` is a fake board parameterised by what the board offers. It
+sits where hidapi sits, so requests travel through the real transport, with
+the same framing, sequence handling and reply matching that runs against real
+hardware.
 
-It is a board fake **parameterised by protocol version**, sitting where hidapi
-sits rather than replacing the client, so requests travel through the real
-transport: the same framing, sequence handling and reply matching that runs
-against real hardware.
-
-Hardware and firmware are described separately, because they are separate. A
-board wires the lights it wires whatever firmware it runs, so `lights` and
-`controls` describe the hardware and `version` decides how much of it the
-firmware will admit to:
+Hardware and firmware are described separately. `lights` and `controls`
+describe what the board has wired, and the capability sets are what its
+firmware lists in `HELLO`:
 
 ```python
-from tests.fake_board import FakeBoard, M_ULTRA_LIGHTS
+from tests.fake_board import ALL_EVENTS, FakeBoard, M_ULTRA_CONTROLS, M_ULTRA_LIGHTS
 
-board = FakeBoard(version=(1, 1), lights=M_ULTRA_LIGHTS)
+board = FakeBoard(lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS, events=ALL_EVENTS - {0})
 device = board.open()          # a real HostLightingDevice driving the fake
 ```
 
-It gates its own replies the way firmware does. Page 5 does not exist before
-v1.1. The extended controls are named from v1.1 but do not stage by name until
-v1.2. `SET_LIGHT_RGBW` does not exist before v1.3. Page 6 does not exist before
-v1.4. And the per-entry outcome mask reads as all zeroes on anything older than
-v1.3, which is the trap worth being able to reproduce: zeroes mean "every entry
-was skipped" to a host that reads them without checking the version first.
+It answers by those sets as firmware does. A command it does not list is
+status 1, and a page or addressing mode it does not list is an invalid
+argument.
 
-It can also misbehave on demand, which is how the resilience tests are written
-without a flaky board to hand:
+It keeps the state the protocol gives a board:
+
+- the staged frame and every frame published (`board.frames`)
+- the takeover
+- the claim's holder and generation
+- the `CONFIGURE` settings and the subscription
+- a state token with a change counter for each configuration page
+
+A request under an outdated generation is refused with status 4, and a change
+of holder clears the staged frame and resets the settings.
+
+It keeps no clock. A lease lapses when a test says so:
 
 ```python
-board.drop.add(hlp.CMD_GET_CAPS)     # leave that command unanswered
-board.reject.add(hlp.CMD_PING)       # answer it with a non-OK status
+board.take_over(name='MESH')   # another application takes the claim
+board.let_go()                 # the claim ends
+board.end_takeover()           # the takeover's keepalive runs out
+board.reconfigure(controls=...)  # a profile switch, which changes the state token
 ```
 
-`attach(monkeypatch, *boards)` makes device discovery find several fake boards,
-which is how picking one of several is tested.
+It can also fail on request, which the resilience tests use:
 
-`M_ULTRA_LIGHTS` is a real board's light table - a Haute42 COSMOX M Ultra Gen 2,
-46 lights, checked record for record against the hardware. It is a useful
-fixture because it is awkward in the ways real boards are: two controls own two
-lights each, and the case strip owns thirty. `M_ULTRA_CONTROLS` is the same
-board's page 6: 21 pins, Up and L3 on two pins each, a turbo pin with no button
-ID, and four controls wired but unlit.
+```python
+board.drop.add(hlp.CMD_GET_PAGE)     # leave that command unanswered
+board.reject.add(hlp.CMD_STAGE)      # answer it with a status other than 0
+board.hooks.append(callback)         # run something before each request is answered
+```
 
-`stub_server.py` is the matching fake for the other side, speaking the Spice API
-wire format over a loopback socket, with a hook for animating its lights.
+`attach(monkeypatch, *boards)` makes discovery find several fake boards, for
+the tests that pick one of several. `ScriptedConnection` is a spice2x
+connection that answers a scripted run of polls, each of which can act on the
+board first, then ends the run as Ctrl-C does.
+
+`M_ULTRA_LIGHTS` is the Lights page of a Haute42 COSMOX M Ultra, with 46
+lights. Two controls have two lights each, and the case strip has 30.
+`M_ULTRA_CONTROLS` is the same board's Controls page: 21 pins, Up and L3 on
+two pins each, a turbo pin, and four controls wired but unlit.
+
+The fake follows `FakeBoard` and `ModelBoard` in gp2040ce-binary-tools
+(`tests/hostlighting_fakes.py`), the reference host's own fakes.
+
+`stub_server.py` is the fake for the game side. It speaks the Spice API wire
+format over a loopback socket, with a hook for animating its lights.
 
 ## The hardware checks
 
-Each takes an optional board-ID prefix, which only matters with several boards
-attached; `hlp-spice2x --list-boards` shows each board's ID. Those that take the
-lighting over clear its staging buffer first, and release the board and restore
-its own animations when they finish, including on failure.
+Each takes an optional board-ID prefix, for use with several boards attached.
+`hlp-spice2x --list-boards` shows each board's ID. A check that lights the
+board claims its lights first and stops if another application holds them. It
+gives the claim up when it finishes, including on failure, which restores the
+board's own animations.
 
-### `hardware_probe.py` - what does this board say about itself
+The reference tools in [gp2040ce-binary-tools][binary-tools] complement
+these. `hlp-conformance` shows that a board's firmware follows the protocol,
+`hlp-caps` prints every page it has, and `hlp-fill --exclusive` or
+`hlp-stream` is a second application to try the bridge against.
+
+### hardware_probe.py
 
 ```
 python -m tests.hardware_probe
 ```
 
-**Read-only.** Sends `PING` and `GET_CAPS` and nothing else, so it never takes
-the lighting over and is safe to run mid-game.
+The probe is read-only. It sends `HELLO` and `GET_PAGE` and nothing else, and
+it claims nothing and stages nothing, so it can run during a game.
 
-Prints the protocol version, the board's identity, and each capability page the
-bridge reads, decoded field by field: the light table grouped by the control that owns each
-light, with a note against any control that owns more than one, then from v1.4
-the control table, one pin per line, marking controls wired to more than one pin.
-It checks the control table against its own counts and against the light
-table's pins, as `hlp-caps` does, and exits non-zero if either check fails.
+It prints, decoded by the bridge's own code:
 
-Run this first against any board, and first whenever something further up is
-behaving strangely: almost every surprising behaviour traces back to something
-on one of these pages. The docstring explains what each page means and the two
-traps in reading page 5.
+- the protocol version and the capabilities `HELLO` lists
+- the board's identity
+- its state, including the holder
+- the Summary
+- the lights, grouped by control, with a note against any control that has
+  more than one
+- the controls, one per line
 
-### `hardware_precedence.py` - which way of naming a light wins
+It checks the two tables against the Summary's counts and against each other,
+and exits non-zero if a check fails.
 
-```
-python -m tests.hardware_precedence
-```
+Run it first against any board, and first when the bridge behaves
+unexpectedly.
 
-Four still pictures, five seconds each, on one control the board gives more than
-one light. Nothing else is lit and nothing moves inside a step, so each step is
-either right or wrong at a glance.
-
-It demonstrates the ordering rule: a control name is staged first, the extra
-lights it implies next, and anything the profile asked for explicitly last. The
-third step is the one worth watching, because an explicit entry asking for black
-must still win - otherwise a profile could never turn one light of a control off.
-
-Getting this order wrong produces a frame that looks right on one of the two
-render pipelines and wrong on the other, which is why it is worth checking by
-eye on real hardware rather than trusting a unit test.
-
-Skips itself on a board where no control owns more than one light.
-
-### `hardware_sweep.py` - does everything still work
+### hardware_lights.py
 
 ```
-python -m tests.hardware_sweep
+python -m tests.hardware_lights
 ```
 
-Eleven phases, about a hundred seconds, each announcing what should be visible
-before it starts. Run it after changing anything that touches staging.
+The lights check has eleven phases and takes about a hundred seconds. Each
+phase announces what should be visible before it starts. Run it after
+changing anything that touches staging.
 
-Every control it uses comes from what the board reports, so phases with nothing
-to demonstrate on a given board say so and are skipped.
+Every control it uses comes from what the board reports. A phase with nothing
+to show on a given board says so and is skipped.
 
-The second phase is the strongest check here: it lights every light in the table
-one at a time, by ordinal, so a control owning two lights shows them separately
-and any ordinal addressing the wrong physical LED shows up immediately as a light
-appearing out of sequence.
+Phase 2 lights every light on the Lights page one at a time, by ordinal. A
+control with two lights shows them separately, and an ordinal addressing the
+wrong LED shows as a light out of sequence.
 
-It also reports anything the board itself objected to - an unacknowledged commit,
-or an ordinal the board says it skipped - and exits non-zero if there was any, so
-it is still worth something when nobody is watching the LEDs.
+Phase 7 shows the staging order in four still frames on one control that has
+two lights. An entry naming one light wins over the control's name, including
+when it asks for black.
 
-### `hardware_bridge.py` - does the whole program work
+The lights check also reports an unacknowledged or refused frame and a
+takeover that did not last its keepalive, and exits non-zero if there was any.
+
+### hardware_bridge.py
 
 ```
 python -m tests.hardware_bridge
 ```
 
-The only check here that does not reach into the bridge. It stands up a fake
-Spice API on a loopback port, writes a profile to disk, and invokes the command
-line entry point exactly as a shell would, for thirty seconds, ending with a real
-interrupt. Argument parsing, profile loading, device discovery, the handshake,
-the polling loop, the keepalive, the periodic LED-map check and the shutdown are
-all the real ones.
+This check runs the whole program. It stands up a fake Spice API on a
+loopback port, writes a profile to disk, and invokes the command line entry
+point as a shell would, for 30 s, ending with a real interrupt. Argument
+parsing, profile loading, discovery, the handshake, the claim and its
+renewal, the polling loop, the watch on the board's state and the shutdown
+are all the real ones.
 
-The profile it writes is generated from what the board reports and left behind
-on purpose: it is the easiest way to see what a profile looks like for a board
-you have. It uses control names and per-light indexes, not raw ranges.
+The profile it writes is generated from what the board reports and is left on
+disk as an example for that board. It uses control names and per-light
+indexes, and no raw ranges.
 
-Two things to watch that no number can tell you:
+Two things to watch:
 
-* **Whether the loop keeps up.** It reports the rate achieved and how many
-  commits went unacknowledged, but a chase that stutters says more than either.
-* **Whether anything survives between runs.** Run it twice in a row and watch the
-  second run's first second. A light holding a colour from the previous run is a
-  pixel nobody staged, which means the staging buffer was not cleared at startup.
-  That is a real bug this project shipped and fixed, and it was found exactly
-  this way.
+- Whether the loop keeps up. The check reports the rate achieved and how many
+  frames went unacknowledged.
+- Whether anything survives between runs. On a second run straight after the
+  first, a light holding a colour from the previous run in the first second
+  is a pixel that was not staged.
 
-## Which to run when
+## Which to run
 
 | Situation | Run |
 |---|---|
 | Any change to the code | `pytest` |
-| A new or unfamiliar board | `python -m tests.hardware_probe` |
-| Changed how frames are staged | `python -m tests.hardware_sweep` |
-| Changed the order passes are emitted in | `python -m tests.hardware_precedence` |
-| Changed the run loop, the CLI, or profile loading | `python -m tests.hardware_bridge`, twice |
-| A board behaving in a way you cannot explain | `hardware_probe` first, then the one closest to the behaviour |
+| A new board | `python -m tests.hardware_probe` |
+| A change to how frames are staged, or to the order of the passes | `python -m tests.hardware_lights` |
+| A change to the run loop, the claim handling, the command line or profile loading | `python -m tests.hardware_bridge`, twice |
+| A board behaving unexpectedly | `hardware_probe` first, then the check closest to the behaviour |
 
-A board is not required to contribute. The automated suite covers all five
-protocol versions through the fake, and that is where a change should be pinned
-first - the hardware checks confirm behaviour, they do not pin it.
+A board is not required to contribute. The automated suite runs the bridge
+and the hardware checks against the fake board, and a change is pinned there
+first. The hardware checks confirm behaviour on a real board.
+
+[binary-tools]: https://github.com/OpenStickCommunity/gp2040ce-binary-tools

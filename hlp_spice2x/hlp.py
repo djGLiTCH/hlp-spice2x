@@ -1,53 +1,36 @@
 """Talk to a GP2040-CE board's Host Lighting interface over HID.
 
 The Host Lighting add-on exposes a vendor HID interface (usage page 0xFF47,
-usage 0x4C) carrying the Host Lighting Protocol: fixed 64-byte reports that
-let host software drive the board's RGB LEDs live and read the board's LED
-layout from its own configuration.
+usage 0x0002) carrying the Host Lighting Protocol (HLP) 2.0. Its fixed
+64-byte reports let host software drive the board's RGB LEDs live and read
+the board's lights and controls from its own configuration.
 
-Every request is `[0]=command, [1]=sequence, [2..]=payload`; the reply echoes
-the command with bit 7 set: `[0]=command|0x80, [1]=sequence, [2]=status,
-[3..]=payload`.
+A request is `[0] command, [1] sequence, [2] flags, [3..] payload`. Its reply
+is `[0] command|0x80, [1] sequence, [2] status, [3..] payload`. An event
+arrives with `[0] = 0x80`.
 
-The board describes itself through GET_CAPS pages. The protocol defines seven;
-this module decodes the five the bridge needs, and the rest are listed so the
-surface is clear:
+HELLO names the board and lists what it implements, and GET_PAGE reads its
+pages. This module reads the five the bridge needs:
 
-* page 0 (identity): factory-unique board ID, board label, firmware version.
-  Read here, and the right thing to bind a board to, since device paths change
-  with USB ports.
-* page 1 (runtime state): input mode, profile number, brightness step,
-  host-assigned player, LED-map fingerprint, current animation index, and from
-  protocol v1.1 the feature bitmask, LED framework, animation namespace and
-  render rate. Note the brightness field is a step index into the board's
-  configured steps, not a 0-255 level, and the step count is not reported.
-* page 2 (LED map): LEDs per button, colour format, layout, LED extent,
-  brightness maximum, and the per-button, player, turbo and case LED ranges.
-  Read here for the colour format, which says whether the chain has a white
-  channel to drive, and for the extent that bounds a raw range.
-* page 3 (animations): current on-board animation index, and how many the
-  board offers. Not read here.
-* page 4 (positions): per-light grid positions, where the render pipeline
-  provides them. Not read here: page 4 is a projection of page 5, so page 5
-  answers everything the bridge would ask of it.
-* page 5 (light table, protocol v1.1): every light the board has, naming the
-  control that owns each one. This is the page that can say a control owns
-  more than one light, which page 2's one-range-per-control table cannot.
-* page 6 (control table, protocol v1.4): every GPIO pin carrying an action,
-  lit or not. The only page that can say a control does not exist. Read here
-  for the startup profile check only: its lit bits lag the light registry, so
-  page 5 decides what is lit.
+* page 0 (identity) gives the board label and firmware version, for display.
+* page 1 (state) gives whether a host frame is shown, the holder and the
+  claim generation, and the CONFIGURE settings in force. A STATE_CHANGED
+  event carries the same record.
+* page 8 (summary) gives the LED extent and addressable limit, the render
+  rate, the colour format, and a change counter for each configuration page.
+* page 10 (controls) lists every control with an action, lit or not. It is
+  the only page that can say a control does not exist.
+* page 11 (lights) lists every light, with its LEDs, kind and owning action.
 
-Pages 2 and 5 answer different questions. Page 2 is "where do I write this
-control"; page 5 is the board's inventory of lights.
+Controls are named by GP2040-CE's own GpioAction values and lights by their
+LightType, so STAGE by action or by kind reaches every light carrying it
+without a table read. Pages 2, 9 and 12 (input modes, profiles, animations)
+are part of the protocol and unread here.
 
-This began as a trimmed copy of the Host Lighting helpers proposed for
-gp2040ce-binary-tools, vendored so the bridge needs nothing but hidapi. The
-framing and decoders still follow those helpers. The capability layer -
-negotiate and HostLightingCapabilities - and the timeout and disconnect
-handling are this project's own, so the module is no longer a drop-in for
-gp2040ce_bintools.hostlighting. Teaching the bridge a new protocol version is
-a change here rather than a second client.
+The framing, the reply matching and the page decoders follow the reference
+host in gp2040ce-binary-tools (gp2040ce_bintools/hostlighting.py). The
+capability layer and the timeout and disconnect handling are this project's
+own, so the module is not a drop-in for it.
 
 See docs/host-lighting.md in the GP2040-CE repository for the protocol
 reference.
@@ -55,162 +38,206 @@ reference.
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
+import secrets
+import struct
 import time
 
-# discovery: match the interface by these, never by VID:PID (which varies by input mode)
+# Discovery matches the interface by these and never by VID:PID, which varies by input mode.
+# The usage is the protocol major version, so only boards of this major are found.
 USAGE_PAGE = 0xFF47
-USAGE = 0x4C
+USAGE = 0x0002
 REPORT_SIZE = 64
-# said when no interface is found; the link names the newest firmware test builds
-NO_INTERFACE = ("no Host Lighting interface found - is a board connected with the add-on enabled? "
-                "The add-on is not in an official GP2040-CE release yet; test builds are at "
-                "https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v1.4")
-
-# The protocol freezes command IDs and existing payload layouts within a major
-# version: a minor version may only add, and only a major version may change
-# what is already there. So a board reporting a minor above the highest known
-# here still keeps every promise this client relies on, and is driven as the
-# highest known rather than refused; a different major may have changed any of
-# them underneath, and is refused.
-SUPPORTED_MAJOR = 1
-MAX_SUPPORTED_MINOR = 4
-PING_MAGIC = b'GPHL'
+MAGIC = b'GPHL'
+PROTOCOL_MAJOR = 2
+# The message for a run that finds no interface. The link names the firmware builds this release was built against.
+NO_INTERFACE = ("no Host Lighting interface found. Connect a board with the add-on enabled. "
+                "The add-on is not in an official GP2040-CE release yet. Test builds are at "
+                "https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc7")
+# the usage pre-release protocol 1.x firmware presents on the same usage page
+USAGE_PROTOCOL_1 = 0x4C
 
 # command IDs, grouped by function range
-CMD_PING = 0x01                 # session and discovery, 0x01-0x0F
-CMD_GET_CAPS = 0x02
-CMD_SET_MODE = 0x03
-CMD_SET_BUTTONS = 0x10          # frame staging, 0x10-0x2F
-CMD_SET_RANGE = 0x11
-CMD_SET_RANGE_RGBW = 0x12
-CMD_CLEAR = 0x14
-CMD_SET_LIGHT = 0x15            # protocol v1.2
-CMD_SET_LIGHT_RGBW = 0x16       # protocol v1.3
-CMD_COMMIT = 0x30               # frame lifecycle, 0x30-0x3F
-CMD_RELEASE = 0x31
+CMD_HELLO = 0x01                # session and discovery, 0x01-0x0F
+CMD_GET_PAGE = 0x02
+CMD_CLAIM = 0x03
+CMD_CONFIGURE = 0x04
+CMD_SUBSCRIBE = 0x05
+CMD_STAGE = 0x10                # frame staging, 0x10-0x1F
+CMD_CLEAR = 0x13
+CMD_COMMIT = 0x20               # frame lifecycle, 0x20-0x2F
+CMD_RELEASE = 0x21
 
-RESPONSE_FLAG = 0x80
-STATUS_NAMES = {0: 'OK', 1: 'UNSUPPORTED', 2: 'INVALID_ARG'}
+# request flags, the same on every command
+FLAG_COMMIT_AFTER = 0x01        # publish the staged frame after this command succeeds
+FLAG_NO_REPLY = 0x02            # send no reply
+FLAG_KEEPALIVE = 0x04           # refresh a live takeover's keepalive
+# bits 4-6 carry the claim generation the sender acts under, 1-7, or 0 while it holds no claim
+FLAG_GENERATION_SHIFT = 4
+FLAG_GENERATION_MASK = 0x70
 
-# GET_CAPS pages, as the request's payload byte [2]. Pages 3 and 4 are part of
-# the protocol but unread here; see the module docstring for what they hold.
-CAPS_PAGE_IDENTITY = 0
-CAPS_PAGE_STATE = 1
-CAPS_PAGE_LED_MAP = 2
-CAPS_PAGE_ANIMATIONS = 3
-CAPS_PAGE_POSITIONS = 4
-CAPS_PAGE_LIGHTS = 5            # protocol v1.1
-CAPS_PAGE_CONTROLS = 6          # protocol v1.4
+REPLY_FLAG = 0x80
+EVENT_MARKER = 0x80             # [0] of an event, which no reply carries
+STATUS_OK = 0
+STATUS_UNSUPPORTED = 1
+STATUS_INVALID = 2
+STATUS_STALE = 3
+STATUS_CLAIMED = 4
+STATUS_NAMES = {STATUS_OK: 'OK', STATUS_UNSUPPORTED: 'UNSUPPORTED', STATUS_INVALID: 'INVALID_ARG',
+                STATUS_STALE: 'STALE_TOKEN', STATUS_CLAIMED: 'CLAIMED'}
+EVENT_STATE_CHANGED = 0
 
-# pages answered a slice at a time, taking a start entry in payload byte [3]
-PAGED_CAPS_PAGES = (CAPS_PAGE_POSITIONS, CAPS_PAGE_LIGHTS, CAPS_PAGE_CONTROLS)
+# pages
+PAGE_IDENTITY = 0
+PAGE_STATE = 1
+PAGE_SUMMARY = 8
+PAGE_CONTROLS = 10
+PAGE_LIGHTS = 11
 
-# page 1 fields appended by protocol v1.1. Replies are zero-filled before the
-# board builds them, so firmware predating these reports them as zero, which
-# reads correctly as "nothing supported, nothing stated" rather than as a value.
-FEATURE_POSITIONS = 1 << 0
-FEATURE_LIGHT_TABLE = 1 << 1
-FEATURE_CONTROL_TABLE = 1 << 2  # protocol v1.4, set from boot
+# A page reply's header ends at [11]. The records sit at [12..59] and the state token at [60..63].
+RECORDS_OFFSET = 12
+RECORDS_AREA = 48
+TOKEN_OFFSET = 60
 
-# page 5 record flags. Both are positive assertions: a set bit is the board
-# vouching for something, so a record left at zero claims nothing.
-LIGHT_FLAG_POSITION = 0x01      # the grid coordinates in this record are real
-LIGHT_FLAG_PER_LIGHT = 0x02     # read from a per-light table, describes one light
+# each page's field groups, in mask bit order, and their widths in bytes. A group's width never
+# changes once it ships, and a later 2.x board adds groups after these.
+PAGE_GROUPS = {
+    PAGE_STATE: (9, 22, 4),
+    PAGE_SUMMARY: (28, 8),
+    PAGE_CONTROLS: (4, 4, 6, 4),
+    PAGE_LIGHTS: (4, 2, 3, 4, 2, 1),
+}
+# The groups read here, as GET_PAGE field masks. A mask always names its groups, since mask 0
+# also returns the groups a later board adds.
+STATE_GROUPS = 0x07             # State, Controller, Settings
+SUMMARY_GROUPS = 0x03           # Summary, Changes
+CONTROL_GROUPS = 0x01           # key, action, flags
+LIGHT_GROUPS = 0x07             # LEDs, kind and flags, owner pin and action
+IDENTITY_LABEL = 0              # page 0 group bits
+IDENTITY_FIRMWARE = 3
+IDENTITY_STRING_MAX = 48
 
-# The narrowest page 5 record this decoder can read. The real stride comes off
-# the wire on every reply, which is why it is there: a later, wider record must
-# not silently misalign an older decoder. Anything narrower is missing fields
-# that are read below, so it is refused rather than guessed at.
-LIGHT_STRIDE_MIN = 12
+# the none values, which never equal a key
+NONE_8 = 0xFF
+ACTION_NONE = -32768            # 0x8000 as a signed 16-bit action
 
-# page 6: the narrowest record this decoder can read, and the record's lit flag.
-# The lit bit lags the light registry; page 5 decides what is lit.
-CONTROL_STRIDE_MIN = 6
-CONTROL_FLAG_LIT = 0x01
+# staging: [3] bits 0-3 addressing, bits 4-7 pixel format
+ADDRESSING_LED_RUN = 0
+ADDRESSING_LIGHT = 4
+ADDRESSING_ACTION = 6
+ADDRESSING_KIND = 7
+ADDRESS_SIZES = {ADDRESSING_LIGHT: 2, ADDRESSING_ACTION: 2, ADDRESSING_KIND: 1}
+PIXEL_RGB = 0
+PIXEL_RGBW = 1
+PIXEL_SIZES = {PIXEL_RGB: 3, PIXEL_RGBW: 4}
+OUTCOME_BITS = 32               # the STAGE outcome mask, which bounds a report's entries
 
-# a page 1 or page 2 slot with nothing in it, and the page 5 spelling of the
-# same byte - they answer different questions, so both names are kept
-UNMAPPED = 0xFF
-BUTTON_NONE = 0xFF              # no control owns this light
+# CLAIM actions and the application name's size
+CLAIM_TAKE = 0                  # take the claim when unclaimed, keep it when held
+CLAIM_TAKE_OVER = 1
+CLAIM_GIVE_UP = 2
+CLAIM_NAME_SIZE = 16
+CLAIM_EXCLUSIVE = 0x01
+CONTROLLER_SIZE = 22            # page 1's Controller group, which the CLAIM and status 4 replies carry
 
-# the firmware's LED buffer size, which bounds raw ranges
-MAX_LEDS = 100
-# per-report payload limits
-SET_BUTTONS_MAX = 15            # [buttonId,R,G,B] entries
-SET_RANGE_MAX = 20              # RGB pixels
-SET_RANGE_RGBW_MAX = 15         # RGBW pixels
-SET_LIGHT_MAX = 15              # [ordinal,R,G,B] entries, protocol v1.2
-SET_LIGHT_RGBW_MAX = 12         # [ordinal,R,G,B,W] entries, protocol v1.3
+TAKEOVER_OVERLAY = 1
 
-# page 2 colour formats. The W formats are the ones with a white emitter to
-# drive; on the others a white component has nowhere to go.
+# Summary colour formats. Only the W formats have a white emitter, so a white component reaches
+# no LED on the others.
 LED_FORMAT_NAMES = {0: 'GRB', 1: 'RGB', 2: 'GRBW', 3: 'RGBW'}
 WHITE_LED_FORMATS = frozenset({2, 3})
 
-# button IDs 0-17 as indexed in the page 2 LED map. That table is exactly these
-# eighteen and can never grow, so this stays a plain list of that length.
-BUTTON_NAMES = ['Up', 'Down', 'Left', 'Right', 'B1', 'B2', 'B3', 'B4', 'L1', 'R1', 'L2', 'R2',
-                'S1', 'S2', 'L3', 'R3', 'A1', 'A2']
-SPECIAL_TARGETS = {'PLED1': 24, 'PLED2': 25, 'PLED3': 26, 'PLED4': 27, 'TURBO': 28, 'CASE': 29}
+# The control names a profile may use, as GP2040-CE's GpioAction values (proto/enums.proto).
+# STAGE by action reaches every light carrying it, so a control wired to two buttons lights both.
+ACTION_NAMES = ['Up', 'Down', 'Left', 'Right', 'B1', 'B2', 'B3', 'B4', 'L1', 'R1', 'L2', 'R2',
+                'S1', 'S2', 'A1', 'A2', 'L3', 'R3']
+ACTIONS = {name: action for action, name in enumerate(ACTION_NAMES, start=1)}
+ACTIONS.update({'A3': 41, 'A4': 42})
+ACTIONS.update({f'E{n + 1}': 43 + n for n in range(12)})
+# The lights with no control behind them, as LightType values. STAGE by kind reaches every light
+# of the kind.
+KINDS = {'CASE': 1, 'TURBO': 2, 'PLED1': 3, 'PLED2': 4, 'PLED3': 5, 'PLED4': 6}
+KIND_BUTTON = 0
 
-# The wider namespace the light table can report, added by protocol v1.1: A3 and
-# A4 at 18-19, E1-E12 at 30-41. Page 2 has no slot for these, so they appear
-# only on page 5. 20-23 are permanently unassigned - those gamepad bits are the
-# dpad in a second encoding rather than four more controls - so they are absent
-# here on purpose. From v1.1 the light table names them; only from v1.2 does
-# SET_BUTTONS stage them.
-EXTENDED_TARGETS = {'A3': 18, 'A4': 19}
-EXTENDED_TARGETS.update({f'E{n + 1}': 30 + n for n in range(12)})
-EXTENDED_CONTROLS = frozenset(EXTENDED_TARGETS.values())
+# every spelling a profile may use, as the (addressing, address) STAGE reaches it by, and the
+# reverse for reporting
+CONTROL_TARGETS = {name.upper(): (ADDRESSING_ACTION, action) for name, action in ACTIONS.items()}
+CONTROL_TARGETS.update({name: (ADDRESSING_KIND, kind) for name, kind in KINDS.items()})
+CONTROL_NAMES = {(ADDRESSING_ACTION, action): name for name, action in ACTIONS.items()}
+CONTROL_NAMES.update({(ADDRESSING_KIND, kind): name for name, kind in KINDS.items()})
 
-# every spelling a profile may use, and the reverse for reporting
-CONTROL_TARGETS = {name.upper(): index for index, name in enumerate(BUTTON_NAMES)}
-CONTROL_TARGETS.update(SPECIAL_TARGETS)
-CONTROL_TARGETS.update(EXTENDED_TARGETS)
-CONTROL_NAMES = dict(enumerate(BUTTON_NAMES))
-CONTROL_NAMES.update({value: name for name, value in SPECIAL_TARGETS.items()})
-CONTROL_NAMES.update({value: name for name, value in EXTENDED_TARGETS.items()})
-
-# Controls that are meant to be a single lamp, and so are worth expanding to all
-# of their lights. The player LEDs, turbo and the case strip are left out on
-# purpose: each already has a staging path that covers the whole of it in one
-# entry, and a case strip is routinely dozens of lights, so expanding one would
-# buy nothing and cost several extra reports in every frame. They are also the
-# controls page 6 can report absent, each sitting on a pin under its own ID.
-ONE_LAMP_CONTROLS = frozenset(range(0, 20)) | frozenset(range(30, 42))
+# What the bridge cannot run without, checked against HELLO's bitmaps. The addressing modes are
+# added per profile.
+REQUIRED = {
+    'commands': (CMD_HELLO, CMD_GET_PAGE, CMD_CLAIM, CMD_CONFIGURE, CMD_STAGE, CMD_CLEAR),
+    'flags': (0, 1, 2, 4, 5, 6),
+    'pages': (PAGE_STATE, PAGE_SUMMARY, PAGE_LIGHTS),
+    'pixel_formats': (PIXEL_RGB,),
+}
+CAPABILITY_LABELS = {'commands': 'command 0x{:02X}', 'flags': 'request flag bit {}', 'pages': 'page {}',
+                     'addressing': 'addressing mode {}', 'pixel_formats': 'pixel format {}'}
 
 
-def build_request(command: int, sequence: int, payload: bytes = b'') -> bytes:
+def _u16(data: bytes, offset: int) -> int:
+    return struct.unpack_from('<H', data, offset)[0]
+
+
+def _s16(data: bytes, offset: int) -> int:
+    return struct.unpack_from('<h', data, offset)[0]
+
+
+def _u32(data: bytes, offset: int) -> int:
+    return struct.unpack_from('<I', data, offset)[0]
+
+
+def _string(data: bytes) -> str:
+    """Decode a NUL-padded string, replacing a partial character at a cut end."""
+    return data.split(b'\x00')[0].decode('utf-8', 'replace')
+
+
+def _bits(value: int) -> set:
+    """List the set bit numbers of a bitmap."""
+    return {bit for bit in range(value.bit_length()) if value & (1 << bit)}
+
+
+def build_request(command: int, sequence: int, payload: bytes = b'', flags: int = 0) -> bytes:
     """Frame a request as a 64-byte report.
 
     :param command: command byte (0x01-0x7F)
     :param sequence: sequence byte echoed by the board in its reply
-    :param payload: command payload, at most 62 bytes
-    :return: the request framed to exactly REPORT_SIZE bytes
+    :param payload: the command's bytes from [3], at most 61
+    :param flags: request flags (FLAG_*)
+    :return: the request framed to REPORT_SIZE bytes
     """
-    if len(payload) > REPORT_SIZE - 2:
-        raise ValueError(f"payload too long ({len(payload)} > {REPORT_SIZE - 2})")
-    return bytes([command, sequence]) + payload + bytes(REPORT_SIZE - 2 - len(payload))
+    if len(payload) > REPORT_SIZE - 3:
+        raise ValueError(f"payload too long ({len(payload)} > {REPORT_SIZE - 3})")
+    return bytes([command, sequence, flags]) + payload + bytes(REPORT_SIZE - 3 - len(payload))
 
 
 def match_reply(reply: bytes, command: int, sequence: int) -> bool:
-    """Check whether a reply report answers the given request.
+    """Check whether a report answers the given request.
 
-    :param reply: a reply report as read from the interface
+    :param reply: a report as read from the interface
     :param command: the command byte of the original request
     :param sequence: the sequence byte of the original request
     :return: True if the reply's command echo and sequence match
     """
-    return len(reply) >= 3 and reply[0] == (command | RESPONSE_FLAG) and reply[1] == sequence
+    return len(reply) >= 3 and reply[0] == (command | REPLY_FLAG) and reply[1] == sequence
 
 
-def control_name(button_id: int) -> str:
-    """Render a protocol button ID as its control name.
+def is_event(report: bytes) -> bool:
+    """Say whether a received report is an event."""
+    return len(report) >= 3 and report[0] == EVENT_MARKER
 
-    :param button_id: protocol button ID
-    :return: the control name, or the raw ID if it is not a known control
+
+def control_name(control) -> str:
+    """Render a control as the name a profile uses for it.
+
+    :param control: an (addressing, address) pair from CONTROL_TARGETS
+    :return: the control name, or the raw address if it has none
     """
-    return CONTROL_NAMES.get(button_id, str(button_id))
+    if control in CONTROL_NAMES:
+        return CONTROL_NAMES[control]
+    return f"{'kind' if control[0] == ADDRESSING_KIND else 'action'} {control[1]}"
 
 
 class HostLightingError(RuntimeError):
@@ -218,40 +245,65 @@ class HostLightingError(RuntimeError):
 
 
 class HostLightingRejected(HostLightingError):
-    """The board answered a command with a non-OK status."""
+    """The board answered a command with a status other than 0."""
+
+    def __init__(self, command: int, status: int, offset: int = 0, holder=None):
+        """Record the rejected command, its status, and the byte at fault or the claim's holder.
+
+        :param command: the command the board refused
+        :param status: the reply's status byte
+        :param offset: for status 2, the offset of the invalid request byte
+        :param holder: for status 4, the decoded Controller group the reply shows
+        """
+        self.command = command
+        self.status = status
+        self.offset = offset
+        self.holder = holder
+        detail = f" at request byte {offset}" if status == STATUS_INVALID else ''
+        if status == STATUS_CLAIMED and holder:
+            detail = (f" by '{holder['holder_name']}'" if holder['holder_token']
+                      else ": the claim has ended")
+        super().__init__(f"command 0x{command:02X} rejected: "
+                         f"{STATUS_NAMES.get(status, hex(status))}{detail}")
 
 
 class HostLightingTimeout(HostLightingError):
     """No reply arrived in time.
 
-    Replies are best-effort while streaming, so a caller may reasonably carry
-    on after one of these.
+    The board answers nothing for about 200 ms while it writes its settings
+    flash, so a caller can carry on after one of these.
     """
 
 
 class HostLightingIncompatible(HostLightingError):
-    """The board speaks a protocol major version this client does not.
+    """The board does not speak this protocol major, or lacks something the bridge needs.
 
-    Distinct from a rejected command: nothing is wrong with the board or the
-    link, the two ends simply do not agree on what the commands mean.
+    The board and the link are sound. The firmware does not offer what is
+    asked of it.
     """
 
 
 class HostLightingDisconnected(HostLightingError):
     """The underlying HID device failed.
 
-    Usually the board was unplugged or rebooted. Distinct from a timeout
-    because carrying on is pointless.
+    The board was unplugged or rebooted, so a caller cannot carry on.
+    """
+
+
+class HostLightingUnanswered(HostLightingDisconnected):
+    """The board is on the bus and answers nothing.
+
+    A caller treats it as a departed board and reports it as one that stopped
+    answering.
     """
 
 
 def _require_length(reply: bytes, length: int, what: str) -> None:
     """Refuse a reply too short for what is about to be read out of it.
 
-    Reports are a fixed 64 bytes and every field below sits at a fixed offset
-    inside one, so a short reply means a truncated or malformed read rather than
-    an older board. Checking once here turns what would otherwise be an
-    IndexError deep in a decoder into something a caller can report.
+    Reports are a fixed 64 bytes and every field sits at a fixed offset inside
+    one, so a short reply is a truncated or malformed read. It is reported
+    here before a decoder indexes past its end.
 
     :param reply: the reply report to check
     :param length: how many bytes the caller is about to read
@@ -261,96 +313,202 @@ def _require_length(reply: bytes, length: int, what: str) -> None:
         raise HostLightingError(f"{what} reply is {len(reply)} bytes, need at least {length}")
 
 
-def decode_state(reply: bytes) -> dict:
-    """Decode GET_CAPS page 1, the board's runtime state.
+def decode_hello(reply: bytes) -> dict:
+    """Decode a HELLO reply.
 
-    Page 1 reply layout: [3] input mode, [4] profile, [5] brightness step,
-    [6] host-assigned player, [7..10] LED-map fingerprint (little endian),
-    [11] current animation index, then appended by protocol v1.1: [12..15]
-    feature bitmask, [16] LED framework, [17] animation namespace, [18] render
-    rate in Hz. Byte [5] is a step index into the board's brightness steps, not
-    a 0-255 level.
+    HELLO reply layout: [3..6] the ASCII magic "GPHL", [7] major, [8] minor,
+    [9..16] board ID, [17] reply queue limit, [18] request flags, [19..34]
+    commands, [35..38] pages, [39..40] addressing modes, [41..42] pixel formats,
+    [43..44] events, [45..46] events enabled now. In the bitmaps at [18..44] a
+    set bit n means the board implements member n.
 
-    Firmware predating the v1.1 fields zero-fills them, and zero reads correctly
-    as "not reported" for every one of them, so reading them needs no version
-    gate - only trusting a non-zero answer does.
-
-    :param reply: a page 1 reply report
-    :return: the decoded fields, with `render_hz` None when the board did not say
+    :param reply: a HELLO reply report
+    :return: the version, board ID as hex, queue limit and the bitmaps as sets
+    :raises HostLightingError: if the reply is not a Host Lighting one
     """
-    _require_length(reply, 19, 'page 1')
+    _require_length(reply, 47, 'HELLO')
+    if reply[3:7] != MAGIC:
+        raise HostLightingError("handshake failed: this interface did not answer as "
+                                "a Host Lighting one")
     return {
-        'input_mode': reply[3],
-        'profile': reply[4],
-        'brightness_step': reply[5],
-        'host_player': reply[6],
-        'fingerprint': int.from_bytes(reply[7:11], 'little'),
-        # 0xFF is 'none selected' - the lights-off state some pipelines persist
-        'animation_index': None if reply[11] == UNMAPPED else reply[11],
-        'features': int.from_bytes(reply[12:16], 'little'),
-        # diagnostic only: the protocol says to branch on the feature bits and
-        # the per-record flags and never on this, and 0 = not reported is a
-        # valid answer from a board that supports everything
-        'framework': reply[16],
-        'animation_namespace': reply[17],
-        'render_hz': reply[18] or None,
+        'major': reply[7],
+        'minor': reply[8],
+        'board_id': bytes(reply[9:17]).hex().upper(),
+        'queue_limit': reply[17],
+        'flags': _bits(reply[18]),
+        'commands': _bits(int.from_bytes(reply[19:35], 'little')),
+        'pages': _bits(_u32(reply, 35)),
+        'addressing': _bits(_u16(reply, 39)),
+        'pixel_formats': _bits(_u16(reply, 41)),
+        'events': _bits(_u16(reply, 43)),
+        'subscribed': _bits(_u16(reply, 45)),
     }
 
 
-def decode_led_map(reply: bytes) -> dict:
-    """Decode GET_CAPS page 2, the per-control LED map.
+def decode_page_header(reply: bytes) -> dict:
+    """Decode the header every GET_PAGE reply carries.
 
-    Page 2 answers "where do I write this control" for the eighteen canonical
-    controls. It is not an inventory of the board's lights: a control may own
-    several lights and only the first appears here, and a board may carry lights
-    on controls this page cannot name. Page 5 is the inventory.
+    Layout: [3] page, [4..5] start record, [6..7] total records, [8] records in
+    this reply, [9] record stride, [10..11] field groups returned, [60..63] the
+    state token. The page, start and groups echo the request.
 
-    `led_extent` is the highest LED index in use plus one - the number to size a
-    frame buffer from, and the board's own answer to the question MAX_LEDS
-    hardcodes. It is deliberately not the sum of the ranges below it, because
-    that sum omits the lights page 2 cannot name.
-
-    :param reply: a page 2 reply report
-    :return: the decoded fields, `buttons` mapping button ID to (first LED,
-        count) and `players` mapping player number to LED index
+    :param reply: a GET_PAGE reply report, or a STATE_CHANGED event
+    :return: the decoded header
     """
-    _require_length(reply, 55, 'page 2')
-    buttons = {}
-    for index in range(len(BUTTON_NAMES)):
-        first, count = reply[8 + index * 2], reply[9 + index * 2]
-        if first != UNMAPPED:
-            buttons[index] = (first, count)
-    # The four player slots are positional, so an unmapped one has to drop out
-    # by key rather than by position: filtering them into a list would slide
-    # player 2's index into player 1's place whenever player 1 is absent.
-    players = {slot + 1: reply[44 + slot] for slot in range(4)
-               if reply[44 + slot] != UNMAPPED}
+    _require_length(reply, REPORT_SIZE, 'page')
     return {
-        'leds_per_button': reply[3],
-        'colour_format': reply[4],
-        'layout': reply[5],
-        'led_extent': reply[6],
-        'brightness_maximum': reply[7],
-        'buttons': buttons,
-        'players': players,
-        'turbo': None if reply[48] == UNMAPPED else reply[48],
-        'case': None if reply[49] == UNMAPPED or not reply[50] else (reply[49], reply[50]),
-        'fingerprint': int.from_bytes(reply[51:55], 'little'),
+        'status': reply[2],
+        'page': reply[3],
+        'start': _u16(reply, 4),
+        'total': _u16(reply, 6),
+        'count': reply[8],
+        'stride': reply[9],
+        'groups': _u16(reply, 10),
+        'token': _u32(reply, TOKEN_OFFSET),
     }
+
+
+def decode_controller(data: bytes) -> dict:
+    """Decode page 1's Controller group, the application holding CLAIM.
+
+    The CLAIM reply carries the same 22 bytes at [8..29] and a status 4 reply
+    at [3..24].
+
+    :param data: the group's bytes
+    :return: the holder's token (0 unclaimed) and name, whether its claim is
+        exclusive, and the claim generation
+    """
+    return {'holder_token': _u32(data, 0), 'holder_name': _string(data[4:20]),
+            'claim_exclusive': bool(data[20] & CLAIM_EXCLUSIVE), 'claim_generation': data[21]}
+
+
+def _state_group(group: int, data: bytes) -> dict:
+    if group == 0:
+        return {'takeover_live': bool(data[0] & 0x01), 'input_mode': data[1], 'profile': data[2],
+                'player': data[3], 'brightness_step': data[6], 'takeover_number': data[7]}
+    if group == 1:
+        return decode_controller(data)
+    return {'overlay': data[0] == TAKEOVER_OVERLAY, 'keepalive_ms': _u16(data, 1),
+            'brightness_applied': bool(data[3])}
+
+
+def _summary_group(group: int, data: bytes) -> dict:
+    if group == 1:
+        # one change counter for each configuration page, 8 to 15
+        return {'page_changes': {PAGE_SUMMARY + index: count for index, count in enumerate(data[:8])}}
+    return {'led_extent': _u16(data, 0), 'led_limit': _u16(data, 2), 'render_hz': _u16(data, 4),
+            'colour_format': data[6], 'controls': _u16(data, 16), 'lit_controls': _u16(data, 18),
+            'unlit_controls': _u16(data, 20), 'lights': _u16(data, 22)}
+
+
+def _control_group(group: int, data: bytes) -> dict:
+    if group == 0:
+        return {'key': data[0], 'action': _s16(data, 1),
+                'duplicated': bool(data[3] & 0x01), 'lit': bool(data[3] & 0x02)}
+    return {}
+
+
+def _light_group(group: int, data: bytes) -> dict:
+    if group == 0:
+        return {'first_led': _u16(data, 0), 'led_count': _u16(data, 2)}
+    if group == 1:
+        return {'kind': data[0], 'duplicated': bool(data[1] & 0x01)}
+    if group == 2:
+        action = _s16(data, 1)
+        return {'owner_pin': None if data[0] == NONE_8 else data[0],
+                'owner_action': None if action == ACTION_NONE else action}
+    return {}
+
+
+GROUP_DECODERS = {
+    PAGE_STATE: _state_group,
+    PAGE_SUMMARY: _summary_group,
+    PAGE_CONTROLS: _control_group,
+    PAGE_LIGHTS: _light_group,
+}
+
+
+def decode_records(reply: bytes) -> list:
+    """Decode the records of a GET_PAGE reply, field group by field group.
+
+    The reply takes the requested groups in bit order, echoes those it returned
+    at [10..11] and sets the stride to their total width. Records are stepped by
+    that stride, so a group a later board adds after them does not misalign the
+    read.
+
+    :param reply: the reply report of page 1, 8, 10 or 11, or a STATE_CHANGED event
+    :return: the records, one dict each, with `ordinal` the record's index in the page
+    :raises HostLightingError: if the header does not describe records that fit
+    """
+    header = decode_page_header(reply)
+    if header['page'] not in PAGE_GROUPS:
+        raise HostLightingError(f"page {header['page']} is not one this client decodes")
+    widths = PAGE_GROUPS[header['page']]
+    decode = GROUP_DECODERS[header['page']]
+    known = sum(width for group, width in enumerate(widths) if header['groups'] & (1 << group))
+    if header['count'] and header['stride'] < known:
+        raise HostLightingError(f"page {header['page']} record stride is {header['stride']}, "
+                                f"need at least {known}")
+    if header['count'] * header['stride'] > RECORDS_AREA:
+        raise HostLightingError(f"page {header['page']} claims {header['count']} records of "
+                                f"{header['stride']} bytes, more than a reply holds")
+    records = []
+    for index in range(header['count']):
+        offset = RECORDS_OFFSET + index * header['stride']
+        record = {'ordinal': header['start'] + index}
+        for group, width in enumerate(widths):
+            if header['groups'] & (1 << group):
+                record.update(decode(group, bytes(reply[offset:offset + width])))
+                offset += width
+        records.append(record)
+    return records
+
+
+def decode_state_changed(event: bytes) -> tuple:
+    """Decode a STATE_CHANGED event, whose [3..63] are those of a page 1 reply.
+
+    :param event: the event report ([1] is the event number)
+    :return: (the page 1 record, the state token)
+    :raises HostLightingError: for any other event, or one that is not page 1
+    """
+    _require_length(event, REPORT_SIZE, 'event')
+    if event[1] != EVENT_STATE_CHANGED or event[3] != PAGE_STATE:
+        raise HostLightingError(f"event {event[1]} is not STATE_CHANGED")
+    records = decode_records(event)
+    if not records:
+        raise HostLightingError("STATE_CHANGED carries no record")
+    return records[0], _u32(event, TOKEN_OFFSET)
+
+
+def decode_identity(reply: bytes) -> dict:
+    """Decode a page 0 reply's strings.
+
+    Each returned group is a string of up to 48 bytes, NUL-terminated when
+    shorter, starting after the previous one's NUL or 48th byte. Only the
+    groups the reply echoes are present.
+
+    :param reply: a page 0 reply report
+    :return: {group bit: string} for the groups the reply echoes
+    """
+    header = decode_page_header(reply)
+    area = bytes(reply[RECORDS_OFFSET:RECORDS_OFFSET + RECORDS_AREA])
+    strings = {}
+    used = 0
+    for group in sorted(_bits(header['groups'])):
+        raw = area[used:used + IDENTITY_STRING_MAX].split(b'\x00')[0]
+        strings[group] = raw.decode('utf-8', 'replace')
+        used += len(raw) + 1 if len(raw) < IDENTITY_STRING_MAX else IDENTITY_STRING_MAX
+    return strings
 
 
 def subtractive_white(colour) -> tuple:
-    """Convert a profile colour into the RGBW a board expects to be sent.
+    """Convert a profile colour into the RGBW a white chain is sent.
 
-    The achromatic part of a colour is exactly what a white emitter exists to
-    carry, so it is moved there: W takes min(R, G, B) and the three colour
-    channels are reduced by it. Sending white as equal parts red, green and blue
-    on a chain that has a white emitter lights three LEDs to make a worse white
-    than the one sitting next to them.
+    W takes min(R, G, B) and the three colour channels are reduced by it. An
+    RGBW pixel renders as sent, so the white part of a colour is shown by the
+    white emitter alone.
 
-    A white component the profile gave explicitly is added on top and clamped,
-    so a colour asking for red plus white gets both rather than whichever of the
-    two the conversion happened to favour.
+    A white component the profile gave is added to W and clamped at 255.
 
     :param colour: (r, g, b), or (r, g, b, w) as the profile gave it
     :return: (r, g, b, w) to put on the wire
@@ -363,190 +521,122 @@ def subtractive_white(colour) -> tuple:
 
 
 def has_white_channel(colour_format: int) -> bool:
-    """Say whether a page 2 colour format has a white emitter to drive.
+    """Say whether a Summary colour format has a white emitter to drive.
 
-    :param colour_format: the page 2 colour format byte
+    :param colour_format: the Summary colour format byte
     :return: True if the chain carries a white channel a W component can reach
     """
     return colour_format in WHITE_LED_FORMATS
 
 
-def decode_lights(reply: bytes) -> dict:
-    """Decode one page of GET_CAPS page 5, the light table.
+def stage_capacity(addressing: int, pixel_format: int) -> int:
+    """How many run members or entries one STAGE report carries.
 
-    Page 5 reply layout: [3] records the board has in total, [4] the ordinal
-    this page starts at, [5] records in this page, [6] record stride, [7..] the
-    records themselves, [60..63] the light table's fingerprint.
-
-    The stride is read from the reply rather than assumed: it is on the wire
-    precisely so that a later, wider record does not silently misalign an older
-    decoder. A record is identified by its ordinal, not by its first LED, which
-    is not a unique key - boards exist with two lights starting at one index.
-
-    :param reply: a page 5 reply report
-    :return: the page header plus its decoded records
+    :param addressing: ADDRESSING_* mode
+    :param pixel_format: PIXEL_RGB or PIXEL_RGBW
+    :return: the per-report capacity
     """
-    _require_length(reply, 64, 'page 5')
-    total, start, count, stride = reply[3], reply[4], reply[5], reply[6]
-    if count and stride < LIGHT_STRIDE_MIN:
-        raise HostLightingError(f"page 5 record stride is {stride}, need at least {LIGHT_STRIDE_MIN}")
-    _require_length(reply, 7 + count * stride, 'page 5')
-    records = []
-    for n in range(count):
-        record = reply[7 + n * stride:7 + (n + 1) * stride]
-        flags = record[11]
-        records.append({
-            'ordinal': start + n,
-            'first_led': record[0],
-            'led_count': record[1],
-            'kind': record[2],
-            'button_id': record[3],
-            'gpio_pin': None if record[4] == UNMAPPED else record[4],
-            'gpio_action': int.from_bytes(record[5:7], 'little', signed=True),
-            'player_index': None if record[7] == UNMAPPED else record[7],
-            'case_group': None if record[8] == UNMAPPED else record[8],
-            'position': (record[9], record[10]) if flags & LIGHT_FLAG_POSITION else None,
-            # Reported as the caveat rather than the assertion: a caller wants to
-            # know when a record cannot show duplicates, and that is the absence
-            # of the board's per-light claim. A synthesised table is rebuilt from
-            # per-control configuration, so it holds one row per control however
-            # many lights that control really drives.
-            'synthesised': not (flags & LIGHT_FLAG_PER_LIGHT),
-        })
-    return {
-        'total': total,
-        'start': start,
-        'stride': stride,
-        'records': records,
-        'fingerprint': int.from_bytes(reply[60:64], 'little'),
-    }
+    pixel = PIXEL_SIZES[pixel_format]
+    if addressing == ADDRESSING_LED_RUN:
+        capacity = (REPORT_SIZE - 7) // pixel
+    else:
+        capacity = (REPORT_SIZE - 5) // (ADDRESS_SIZES[addressing] + pixel)
+    return min(capacity, OUTCOME_BITS)
 
 
-def decode_controls(reply: bytes) -> dict:
-    """Decode one page of GET_CAPS page 6, the control table (protocol v1.4).
+def _pixel(colour, pixel_format: int) -> bytes:
+    """Encode one colour, refusing one of the wrong width for its format.
 
-    Page 6 reply layout: [3] records in total, [4] the ordinal this page starts
-    at, [5] records in this page, [6] record stride, [7] lit count, [8] unlit
-    count, [9] page flags, [10..] the records, [60..63] the fingerprint.
-
-    One record per GPIO pin with an action. The pin is the key; two pins with
-    one action are two records with the same button ID. Keys match page 5's, so
-    the two join on gpio_pin. The lit bit lags the light registry and is not a
-    lighting verdict.
-
-    :param reply: a page 6 reply report
-    :return: the page header plus its decoded records
+    The count byte tells the firmware how many fixed-width entries follow. A
+    pixel of the wrong width shifts every entry after it, and the board does
+    not reject the report.
     """
-    _require_length(reply, 64, 'page 6')
-    total, start, count, stride = reply[3], reply[4], reply[5], reply[6]
-    if count and stride < CONTROL_STRIDE_MIN:
-        raise HostLightingError(f"page 6 record stride is {stride}, need at least {CONTROL_STRIDE_MIN}")
-    _require_length(reply, 10 + count * stride, 'page 6')
-    records = []
-    for n in range(count):
-        record = reply[10 + n * stride:10 + (n + 1) * stride]
-        records.append({
-            'ordinal': start + n,
-            'gpio_pin': record[0],
-            'gpio_action': int.from_bytes(record[1:3], 'little', signed=True),
-            'button_id': record[3],
-            'lit': bool(record[4] & CONTROL_FLAG_LIT),
-        })
-    return {
-        'total': total,
-        'start': start,
-        'stride': stride,
-        'lit': reply[7],
-        'unlit': reply[8],
-        'flags': reply[9],
-        'records': records,
-        'fingerprint': int.from_bytes(reply[60:64], 'little'),
-    }
+    if len(colour) != PIXEL_SIZES[pixel_format]:
+        raise ValueError(f"pixel format {pixel_format} takes {PIXEL_SIZES[pixel_format]}-byte "
+                         f"colours, got {len(colour)}")
+    return bytes(colour)
+
+
+def entry_payloads(addressing: int, entries: list, pixel_format: int = PIXEL_RGB) -> list:
+    """Build the STAGE payloads that colour entries addressed one by one.
+
+    Entries layout: [3] bits 0-3 addressing, bits 4-7 pixel format, [4] n,
+    [5..] n x (address, pixel). An action is signed 16-bit, a light ordinal
+    16-bit and a kind 8-bit.
+
+    :param addressing: ADDRESSING_LIGHT, ADDRESSING_ACTION or ADDRESSING_KIND
+    :param entries: (address, colour) pairs, the colour as wide as the format
+    :param pixel_format: PIXEL_RGB or PIXEL_RGBW
+    :return: one payload per report needed, in order
+    """
+    pack = {ADDRESSING_ACTION: '<h', ADDRESSING_LIGHT: '<H', ADDRESSING_KIND: '<B'}[addressing]
+    capacity = stage_capacity(addressing, pixel_format)
+    payloads = []
+    for start in range(0, len(entries), capacity):
+        chunk = entries[start:start + capacity]
+        payloads.append(bytes([addressing | (pixel_format << 4), len(chunk)]) + b''.join(
+            struct.pack(pack, address) + _pixel(colour, pixel_format) for address, colour in chunk))
+    return payloads
+
+
+def run_payloads(first: int, count: int, colour, pixel_format: int = PIXEL_RGB) -> list:
+    """Build the STAGE payloads that colour a run of LEDs one colour.
+
+    Run layout: [3] bits 0-3 addressing 0, bits 4-7 pixel format, [4..5] first
+    LED, [6] count, [7..] count x pixel.
+
+    :param first: first LED index
+    :param count: how many LEDs to colour
+    :param colour: the colour to repeat across them, as wide as the format
+    :param pixel_format: PIXEL_RGB or PIXEL_RGBW
+    :return: one payload per report needed, in order
+    """
+    capacity = stage_capacity(ADDRESSING_LED_RUN, pixel_format)
+    pixel = _pixel(colour, pixel_format)
+    payloads = []
+    for offset in range(0, count, capacity):
+        chunk = min(capacity, count - offset)
+        payloads.append(bytes([ADDRESSING_LED_RUN | (pixel_format << 4)])
+                        + struct.pack('<HB', first + offset, chunk) + pixel * chunk)
+    return payloads
+
+
+def lacking(hello: dict, addressing=()) -> list:
+    """List what the bridge needs that a board's HELLO does not offer.
+
+    A host gates on HELLO's capability bitmaps and never on the minor version.
+
+    :param hello: a decoded HELLO reply
+    :param addressing: the addressing modes the profile stages by
+    :return: what is missing, named for a message, or an empty list
+    """
+    needs = dict(REQUIRED, addressing=tuple(addressing))
+    return [CAPABILITY_LABELS[kind].format(member) for kind, members in needs.items()
+            for member in members if member not in hello[kind]]
 
 
 class HostLightingCapabilities:
-    """What the board on the other end can do, decided once at connect.
+    """What the board on the other end offers, read once at connect.
 
-    Call sites ask this object what is available rather than comparing version
-    numbers, so a new protocol version adds a field here instead of a version
-    comparison at every branch that cares.
-
-    Three of these deliberately do not follow from the version alone. The light
-    and control tables are gated on their page 1 feature bits as well, because a
-    cleared bit is a promise the page returns nothing: a board that enumerates
-    before its render core has populated the light registry legitimately
-    reports the light-table bit clear. And host-supplied white needs a white
-    chain as well as v1.3. The LED framework byte is not consulted at all: the
-    protocol says to branch on the feature bits and the per-record flags and
-    never on it, and a board that does not report a framework is not thereby a
-    lesser board.
+    Call sites ask this object what is available, so the pages are decoded in
+    one place and a run with no board answers every question with no.
     """
 
-    def __init__(self, major=None, minor=None, reported=None, state=None, led_map=None,
-                 forced=False):
-        """Hold a negotiated version and the capability pages read alongside it.
+    def __init__(self, hello=None):
+        """Hold a HELLO reply and the pages read alongside it.
 
-        :param major: the negotiated major version, or None for no board
-        :param minor: the negotiated minor version, clamped to what is supported
-        :param reported: the (major, minor) the board actually stated
-        :param state: the decoded GET_CAPS page 1
-        :param led_map: the decoded GET_CAPS page 2
-        :param forced: whether an unsupported major version was overridden
+        :param hello: the decoded HELLO reply, or None for no board
         """
-        self.major = major
-        self.minor = minor
-        self.reported = reported
-        self.forced = forced
-        self.state = state or {}
-        self.led_map = led_map or {}
+        self.hello = hello
+        self.summary = {}
+        self.token = None
         self.lights = []
-        self.controls = []
-
-    @property
-    def lights(self) -> list:
-        """The board's light records, in the order page 5 reported them."""
-        return self._lights
-
-    @lights.setter
-    def lights(self, records) -> None:
-        """Cache the records, and the per-control index derived from them.
-
-        Indexing here rather than at each lookup keeps the streaming loop off a
-        scan of the whole table: a board with a case strip has several dozen
-        records, and a frame may ask about several controls.
-        """
-        self._lights = list(records)
-        owners = {}
-        for record in self._lights:
-            if not record['synthesised']:
-                owners.setdefault(record['button_id'], []).append(record)
-        self.owners = owners
-
-    @property
-    def controls(self) -> list:
-        """The board's control records, in the order page 6 reported them."""
-        return self._controls
-
-    @controls.setter
-    def controls(self, records) -> None:
-        """Cache the records, and the pins indexed by button ID.
-
-        Records with no button ID (turbo, modifiers) stay in the list and out of the index.
-        """
-        self._controls = list(records)
-        pins = {}
-        for record in self._controls:
-            if record['button_id'] != BUTTON_NONE:
-                pins.setdefault(record['button_id'], []).append(record)
-        self.pins = pins
+        # None where the board has no Controls page, so nothing can be said to be absent
+        self.controls = None
 
     @classmethod
     def absent(cls):
-        """Describe a run with no board, where nothing can be negotiated.
-
-        Every capability answers no, so a dry run takes the same code paths as
-        the oldest board rather than needing a check for the absence of a board
-        at each one.
+        """Describe a run with no board, where nothing was read.
 
         :return: a HostLightingCapabilities describing no board at all
         """
@@ -555,199 +645,117 @@ class HostLightingCapabilities:
     @property
     def connected(self) -> bool:
         """Whether these capabilities came from a board."""
-        return self.major is not None
+        return self.hello is not None
 
     @property
-    def light_table(self) -> bool:
-        """Whether page 5 will return entries.
-
-        Both halves matter: the page does not exist before v1.1, and a cleared
-        feature bit is a promise it returns nothing rather than a hint that it
-        might. The bit can go from clear to set on a fingerprint change, so this
-        is re-derived from the current page 1 rather than frozen at connect.
-        """
-        return (self.minor or 0) >= 1 and bool(self.state.get('features', 0) & FEATURE_LIGHT_TABLE)
-
-    @property
-    def control_table(self) -> bool:
-        """Whether page 6 will return entries (v1.4).
-
-        Needs the version and the page 1 feature bit, and is re-derived from the
-        current page 1 as light_table is.
-        """
-        return (self.minor or 0) >= 4 and bool(self.state.get('features', 0) & FEATURE_CONTROL_TABLE)
-
-    @property
-    def per_light(self) -> bool:
-        """Whether a single light can be staged by its ordinal (SET_LIGHT, v1.2)."""
-        return (self.minor or 0) >= 2
-
-    @property
-    def outcome_mask(self) -> bool:
-        """Whether a staging reply names which entries were skipped (v1.3)."""
-        return (self.minor or 0) >= 3
+    def events(self) -> bool:
+        """Whether the board offers the STATE_CHANGED event, so its state need not be polled."""
+        return (self.connected and CMD_SUBSCRIBE in self.hello['commands']
+                and EVENT_STATE_CHANGED in self.hello['events'])
 
     @property
     def white_channel(self) -> bool:
         """Whether the board's chain has a white emitter for a W component to reach."""
-        return has_white_channel(self.led_map.get('colour_format', 0))
+        return has_white_channel(self.summary.get('colour_format', 0))
 
     @property
     def host_white(self) -> bool:
-        """Whether a host-supplied white component is honoured as sent.
+        """Whether a host-supplied white component can be sent and will render.
 
-        Before v1.3 an achromatic colour is mapped onto the white emitter by the
-        firmware itself and a host-supplied W is ignored, so sending the
-        textbook subtractive white renders dark. Needing both halves is the
-        point: a white chain on old firmware is not a white channel a host can
-        drive.
+        An RGBW pixel may be sent to any chain, but its W renders only on a
+        chain with a white emitter, and the board has to list the format.
         """
-        return self.white_channel and (self.minor or 0) >= 3
-
-    def stages_by_name(self, button_id: int) -> bool:
-        """Whether SET_BUTTONS will colour this control on this firmware.
-
-        The extended controls are named by the light table from v1.1 but do not
-        stage by name until v1.2. Before then a SET_BUTTONS entry naming one is
-        simply counted as skipped, and the light table is the only route to it.
-
-        :param button_id: the control to ask about
-        :return: True if naming the control in a SET_BUTTONS entry will reach it
-        """
-        return not (button_id in EXTENDED_CONTROLS and (self.minor or 0) < 2)
-
-    def lights_owned_by(self, button_id: int) -> list:
-        """List the lights the board attributes to a control, ignoring synthesised rows.
-
-        A synthesised table is rebuilt from per-control configuration, so it
-        holds one row per control however many lights that control really
-        drives. Those rows cannot answer the question this is asked for, so they
-        are discarded rather than counted.
-
-        :param button_id: the control to ask about
-        :return: the board's records for that control, in ordinal order
-        """
-        return self.owners.get(button_id, [])
-
-    def names_control(self, button_id: int) -> bool:
-        """Say whether the light table mentions a control at all, synthesised or not.
-
-        The difference between this and lights_owned_by being empty is the
-        difference between a board that has no such light and a board whose
-        table cannot describe the one it has.
-
-        :param button_id: the control to ask about
-        :return: True if any record names that control
-        """
-        return any(record['button_id'] == button_id for record in self.lights)
-
-    def lacks_control(self, button_id: int) -> bool:
-        """Say whether the control table shows the board has no such control.
-
-        False wherever page 6 cannot say: no table was read, or the ID is not a
-        pin-carried control. The special targets 24-29 are lights, not controls,
-        and a turbo pin carries no button ID, so they are never judged here.
-
-        :param button_id: the control to ask about
-        :return: True only if a populated control table leaves the control out
-        """
-        return bool(self.controls) and button_id in ONE_LAMP_CONTROLS and button_id not in self.pins
-
-    def stage_op(self, record) -> tuple:
-        """Say how to colour one light on this firmware.
-
-        An ordinal names the whole record in one entry and is immune to page 2's
-        best-effort LED bindings, so it is preferred wherever SET_LIGHT exists.
-        Before that the only address available is the raw LED index the record
-        carries, together with its own count, which may differ from the board's
-        global LEDs-per-button.
-
-        :param record: a page 5 light record
-        :return: ('light', ordinal) or ('range', first LED, LED count)
-        """
-        if self.per_light:
-            return ('light', record['ordinal'])
-        return ('range', record['first_led'], record['led_count'])
-
-    def staging_plan(self) -> dict:
-        """Decide, per control, how a bare control name reaches all of its lights.
-
-        Only controls needing something other than a plain SET_BUTTONS entry
-        appear here, so on most boards this is empty and costs nothing.
-
-        Two shapes go in. A control the light table names but this firmware
-        cannot stage by name has to be coloured by raw index instead. And a
-        one-lamp control the board attributes several lights to gets all of them
-        staged explicitly - all of them, including the one SET_BUTTONS already
-        covered, because there is no sanctioned way to tell which one that was.
-        The redundant write is one entry of one report, and accepting it is the
-        only rule that is correct on both render pipelines.
-
-        :return: mapping of button ID to (stages by name, staging operations)
-        """
-        plan = {}
-        for button_id in {record['button_id'] for record in self.lights}:
-            records = self.lights_owned_by(button_id)
-            if not records:
-                continue
-            if not self.stages_by_name(button_id):
-                plan[button_id] = (False, [self.stage_op(record) for record in records])
-            elif button_id in ONE_LAMP_CONTROLS and len(records) > 1:
-                plan[button_id] = (True, [self.stage_op(record) for record in records])
-        return plan
-
-    def refresh(self, device) -> None:
-        """Re-read the pages a fingerprint change invalidates.
-
-        A fingerprint change means re-reading whichever of the capability pages
-        a host caches. Page 1 is re-read too, because the light-table feature
-        bit can go from clear to set once the board has finished LED setup, and
-        a host that enumerated early would otherwise never notice.
-
-        :param device: an opened HostLightingDevice
-        """
-        self.state = read_state(device)
-        self.led_map = read_led_map(device)
-        self.lights = read_light_table(device, self)
-        self.controls = read_control_table(device, self)
+        return self.white_channel and self.connected and PIXEL_RGBW in self.hello['pixel_formats']
 
     @property
     def render_hz(self):
         """The board's render rate in Hz, or None if it did not say."""
-        return self.state.get('render_hz')
+        return self.summary.get('render_hz') or None
 
     @property
     def led_extent(self) -> int:
-        """The board's own LED extent, falling back to the firmware buffer ceiling."""
-        return self.led_map.get('led_extent') or MAX_LEDS
+        """The highest LED index in use plus one, the number a frame is sized from."""
+        return self.summary.get('led_extent', 0)
 
     @property
-    def fingerprint(self):
-        """The LED-map fingerprint, which changes when the map does."""
-        return self.state.get('fingerprint')
+    def led_limit(self) -> int:
+        """The addressable LED limit. An LED run reaching past it stages nothing."""
+        return self.summary.get('led_limit', 0)
 
-    def summary(self) -> str:
-        """Name the negotiated version and what it buys, for the startup line.
+    def lights_of(self, control) -> list:
+        """List the lights STAGE reaches through a control, in ordinal order.
 
-        Multi-version support that cannot be seen at runtime cannot be supported
-        in the field, so this is printed on every run rather than under a flag.
+        A light whose LEDs all lie at or past the addressable limit is on the
+        page but skipped by STAGE, so it is left out here too.
 
-        :return: a one-line summary of the negotiated capabilities
+        :param control: an (addressing, address) pair from CONTROL_TARGETS
+        :return: the page 11 records STAGE by that action or kind colours
+        """
+        field = 'kind' if control[0] == ADDRESSING_KIND else 'owner_action'
+        return [record for record in self.lights
+                if record[field] == control[1] and record['led_count']
+                and record['first_led'] < self.led_limit]
+
+    def lacks_control(self, control) -> bool:
+        """Say whether the Controls page shows the board has no such control.
+
+        False where page 10 cannot say, which is when the board has no such
+        page or the target is a kind of light.
+
+        :param control: an (addressing, address) pair from CONTROL_TARGETS
+        :return: True only if the Controls page leaves the control's action out
+        """
+        if self.controls is None or control[0] != ADDRESSING_ACTION:
+            return False
+        return all(record['action'] != control[1] for record in self.controls)
+
+    def refresh(self, device, attempts: int = 3) -> bool:
+        """Read the Summary, and the pages whose change counter moved since the last read.
+
+        The Summary's change counters name the pages that changed, so a page
+        whose counter stands is not read again. Each walk names the Summary's
+        state token as the one it expects. A walk the board answers with
+        status 3 starts over from the Summary, so the pages kept never mix two
+        states. Nothing is replaced until every read has landed.
+
+        :param device: an opened HostLightingDevice
+        :param attempts: how many times to start over before giving up
+        :return: True if the Lights or the Controls page was read again, or a
+            Summary field changed
+        :raises HostLightingError: if the configuration keeps changing under the reads
+        """
+        for _ in range(attempts):
+            summary, token = device.read_record(PAGE_SUMMARY, SUMMARY_GROUPS)
+            before = self.summary.get('page_changes', {})
+            now = summary['page_changes']
+            lights, controls = self.lights, self.controls
+            if now[PAGE_LIGHTS] != before.get(PAGE_LIGHTS):
+                lights = device.read_table(PAGE_LIGHTS, LIGHT_GROUPS, token)
+            if PAGE_CONTROLS in self.hello['pages'] and now[PAGE_CONTROLS] != before.get(PAGE_CONTROLS):
+                controls = device.read_table(PAGE_CONTROLS, CONTROL_GROUPS, token)
+            if lights is None or (controls is None and PAGE_CONTROLS in self.hello['pages']):
+                continue    # the token moved under a walk
+            changed = (lights is not self.lights or controls is not self.controls
+                       or any(value != self.summary.get(field) for field, value in summary.items()
+                              if field != 'page_changes'))
+            self.summary, self.token, self.lights, self.controls = summary, token, lights, controls
+            return changed
+        raise HostLightingError("the board's configuration kept changing while it was being read")
+
+    def summary_line(self) -> str:
+        """Name the protocol version and what the board reported, for the startup line.
+
+        :return: a one-line summary of the board
         """
         if not self.connected:
-            return "no board: running without one, so nothing was negotiated"
-        spoken = f"v{self.reported[0]}.{self.reported[1]}"
-        driven = '' if self.reported[1] == self.minor else f", driven as v{self.major}.{self.minor}"
-        offers = ['light table' if self.light_table else 'no light table']
-        if self.controls:
-            offers.append('control table')
-        offers.append('per-light staging' if self.per_light else 'no per-light staging')
-        if self.outcome_mask:
-            offers.append('outcome mask')
-        offers.append(f"renders at {self.render_hz} Hz" if self.render_hz
-                      else 'render rate unstated')
-        white = 'yes' if self.white_channel else 'no'
-        return f"board speaks HLP {spoken}{driven} - {', '.join(offers)} (white channel: {white})"
+            return "no board: running without one, so nothing was read"
+        chain = LED_FORMAT_NAMES.get(self.summary.get('colour_format'), 'unknown')
+        offers = [f"{len(self.lights)} lights on {self.led_extent} LEDs",
+                  f"renders at {self.render_hz} Hz" if self.render_hz else 'render rate unstated',
+                  f"{chain} chain (white channel: {'yes' if self.white_channel else 'no'})",
+                  'state changes by event' if self.events else 'state changes by poll']
+        return (f"board speaks HLP v{self.hello['major']}.{self.hello['minor']}: "
+                f"{', '.join(offers)}")
 
 
 class HostLightingDevice:
@@ -761,6 +769,7 @@ class HostLightingDevice:
         hid = _import_hid()
         device = hid.device()
         device.open_path(path)
+        # a read with no timeout returns at once, so the reports already received can be drained
         device.set_nonblocking(True)
         self._bind(device)
 
@@ -768,9 +777,8 @@ class HostLightingDevice:
     def from_hid(cls, device):
         """Wrap an already-open hidapi device object.
 
-        The one seam through which a device can be built around something other
-        than a real HID path, so a fake board and a real one are initialised by
-        the same code and cannot drift apart as per-session state is added.
+        A fake board and a real one are both initialised through _bind, so
+        per-session state added there reaches both.
 
         :param device: an object with the hidapi read/write/close interface
         :return: a HostLightingDevice driving it
@@ -782,238 +790,351 @@ class HostLightingDevice:
     def _bind(self, device) -> None:
         """Attach an open hidapi device and initialise per-session state."""
         self.device = device
-        self.sequence = 0
+        self.open = True
+        # random, so two applications sharing the board seldom send the same sequence number
+        self.sequence = secrets.randbelow(255)
+        self.events = []
+        # the requests sent whose replies are awaited, and those replies when read while waiting for another
+        self.awaited = set()
+        self.pending = []
+        # the claim generation this application holds the claim under, or 0 while it holds none
+        self.generation = 0
 
     def close(self) -> None:
-        """Close the HID device."""
-        self.device.close()
+        """Close the HID device, once."""
+        if self.open:
+            self.open = False
+            self.device.close()
 
-    def send(self, command: int, payload: bytes = b'') -> None:
-        """Send one command without waiting for its reply.
+    def _read(self, timeout_ms: int) -> bytes:
+        """Read one report, waiting up to a timeout, or return empty when none arrived.
 
-        Staging commands are fire-and-forget for throughput; only the COMMIT
-        that publishes a frame is worth waiting on.
+        The only place a report is read. hidapi raises when the read fails.
+        """
+        try:
+            return bytes(self.device.read(REPORT_SIZE, timeout_ms))
+        except OSError as error:
+            raise HostLightingDisconnected(f"board went away while reading ({error})") from None
+
+    def send(self, command: int, payload: bytes = b'', flags: int = 0) -> int:
+        """Send one request without waiting for its reply.
+
+        Every request carries the claim generation this application holds the
+        claim under, which a request other than CLAIM is refused without once
+        the holder has changed.
 
         :param command: command byte
-        :param payload: command payload bytes
+        :param payload: the command's bytes from [3]
+        :param flags: request flags (FLAG_*)
+        :return: the sequence number sent
         """
-        self.sequence = (self.sequence % 127) + 1
-        # the interface uses unnumbered reports; hidapi wants a leading 0x00 report ID on write
+        self.sequence = (self.sequence % 255) + 1
+        flags |= self.generation << FLAG_GENERATION_SHIFT
+        if not flags & FLAG_NO_REPLY:
+            # no report kept for an earlier request with these numbers answers this one
+            self.pending = [report for report in self.pending
+                            if not match_reply(report, command, self.sequence)]
+            self.awaited.add((command, self.sequence))
         try:
-            self.device.write(b'\x00' + build_request(command, self.sequence, payload))
+            self._write(command, build_request(command, self.sequence, payload, flags))
+        except HostLightingDisconnected:
+            # a request that was not sent has no reply to wait for
+            self.awaited.discard((command, self.sequence))
+            raise
+        return self.sequence
+
+    def _write(self, command: int, request: bytes) -> None:
+        """Write one report, the only place a report is written.
+
+        hidapi reports a failed write by a negative result and does not raise.
+
+        :param command: the request's command byte, for the error message
+        :param request: the 64-byte request
+        :raises HostLightingDisconnected: if the device does not take the report
+        """
+        # the interface uses unnumbered reports, and hidapi takes a leading 0x00 report ID on write
+        try:
+            written = self.device.write(b'\x00' + request)
         except OSError as error:
             raise HostLightingDisconnected(f"board went away while sending "
                                            f"0x{command:02X} ({error})") from None
+        if isinstance(written, int) and written < 0:
+            raise HostLightingDisconnected(f"board went away while sending 0x{command:02X} (write error)")
 
-    def request(self, command: int, payload: bytes = b'', timeout: float = 0.5) -> bytes:
-        """Send one command and wait for its matching reply.
+    def _keep(self, report: bytes) -> None:
+        """Keep an event or the reply to a request still awaited, and drop another application's reply."""
+        if is_event(report):
+            self.events.append(report)
+        elif len(report) >= 3 and (report[0] & ~REPLY_FLAG, report[1]) in self.awaited:
+            self.pending.append(report)
 
-        Because commands can be pipelined, replies may arrive interleaved;
-        each incoming report is matched against this request by its command
-        echo and sequence number rather than assuming strict ordering.
+    def drain(self) -> None:
+        """Read the reports already received, keeping the events and the replies still awaited.
 
-        :param command: command byte
-        :param payload: command payload bytes
-        :param timeout: seconds to wait for the matching reply
-        :return: the reply report ([2] is the status byte, [3..] the payload)
+        Replies and events reach every application with the interface open and
+        wait until read. None of those waiting answers a request not yet sent,
+        so they are read first. An idle application would otherwise take
+        another's earlier reply with the same command and sequence for its own.
         """
-        self.sequence = (self.sequence % 127) + 1
-        try:
-            self.device.write(b'\x00' + build_request(command, self.sequence, payload))
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                report = bytes(self.device.read(REPORT_SIZE))
-                if match_reply(report, command, self.sequence):
-                    return report
-                time.sleep(0.001)
-        except OSError as error:
-            raise HostLightingDisconnected(f"board went away while sending "
-                                           f"0x{command:02X} ({error})") from None
+        while True:
+            report = self._read(0)
+            if not report:
+                return
+            self._keep(report)
+
+    def take_events(self) -> list:
+        """Hand over the events received so far, oldest first.
+
+        :return: the event reports, which are then forgotten here
+        """
+        self.drain()
+        events, self.events = self.events, []
+        return events
+
+    def wait_reply(self, command: int, sequence: int, timeout: float = 0.5, accept=None) -> bytes:
+        """Wait for the reply to one request.
+
+        Each reply is matched by its command echo and sequence number. An
+        event or another application's reply can arrive between two replies.
+
+        :param command: the request's command byte
+        :param sequence: the request's sequence number
+        :param timeout: seconds to wait
+        :param accept: optional test a matching report must also pass, to tell
+            this application's reply from another's with the same numbers
+        :return: the reply report
+        :raises HostLightingTimeout: if no reply arrives in time
+        """
+        for report in [report for report in self.pending if match_reply(report, command, sequence)]:
+            self.pending.remove(report)
+            if accept is None or accept(report):
+                self.awaited.discard((command, sequence))
+                return report
+        deadline = time.monotonic() + timeout
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            report = self._read(max(1, int(left * 1000)))
+            if not report:
+                continue
+            if not match_reply(report, command, sequence):
+                self._keep(report)
+            elif accept is None or accept(report):
+                self.awaited.discard((command, sequence))
+                return report
+        self.awaited.discard((command, sequence))
         raise HostLightingTimeout(f"no reply to command 0x{command:02X} within {timeout}s")
 
-    def request_ok(self, command: int, payload: bytes = b'', timeout: float = 0.5) -> bytes:
-        """Send one command and require an OK status in the reply.
+    def request(self, command: int, payload: bytes = b'', flags: int = 0, timeout: float = 0.5,
+                accept=None) -> bytes:
+        """Send one command and wait for its matching reply.
+
+        Callers keep the timeout at 250 ms or more. The board answers nothing
+        for about 200 ms while it writes its settings flash.
 
         :param command: command byte
-        :param payload: command payload bytes
+        :param payload: the command's bytes from [3]
+        :param flags: request flags (FLAG_*)
         :param timeout: seconds to wait for the matching reply
-        :return: the reply report
+        :param accept: optional test a matching report must also pass
+        :return: the reply report ([2] is the status byte, [3..] the payload)
         """
-        reply = self.request(command, payload, timeout)
-        if reply[2] != 0:
-            status = STATUS_NAMES.get(reply[2], hex(reply[2]))
-            raise HostLightingRejected(f"command 0x{command:02X} rejected: {status}")
+        if flags & FLAG_NO_REPLY:
+            raise ValueError("a request sent with FLAG_NO_REPLY gets no reply, so use send()")
+        self.drain()
+        return self.wait_reply(command, self.send(command, payload, flags), timeout, accept)
+
+    @staticmethod
+    def rejected(command: int, reply: bytes) -> HostLightingRejected:
+        """Build the error for a refused request.
+
+        A status 2 reply carries the offset of the invalid request byte at [3],
+        and a status 4 reply the claim's holder at [3..24].
+
+        :param command: the command the board refused
+        :param reply: its reply report
+        :return: the error to raise
+        """
+        if reply[2] != STATUS_CLAIMED:
+            return HostLightingRejected(command, reply[2], reply[3] if len(reply) > 3 else 0)
+        _require_length(reply, 3 + CONTROLLER_SIZE, 'status 4')
+        return HostLightingRejected(command, reply[2], 0,
+                                    decode_controller(bytes(reply[3:3 + CONTROLLER_SIZE])))
+
+    def request_ok(self, command: int, payload: bytes = b'', flags: int = 0, timeout: float = 0.5,
+                   accept=None) -> bytes:
+        """Send one command and require status 0 in the reply.
+
+        :param command: command byte
+        :param payload: the command's bytes from [3]
+        :param flags: request flags (FLAG_*)
+        :param timeout: seconds to wait for the matching reply
+        :param accept: optional test a matching report must also pass
+        :return: the reply report
+        :raises HostLightingRejected: on any other status
+        """
+        reply = self.request(command, payload, flags, timeout, accept)
+        if reply[2] != STATUS_OK:
+            raise self.rejected(command, reply)
         return reply
 
-    def get_caps_page(self, page: int, start_entry: int = 0) -> bytes:
-        """Read one GET_CAPS page.
+    def hello(self) -> dict:
+        """Send HELLO and decode the reply.
 
-        :param page: which capability page to read (CAPS_PAGE_* constant)
-        :param start_entry: first entry to return, for the paged pages
-        :return: the reply report ([3..] is the page's payload)
+        :return: the decoded reply (see decode_hello)
+        :raises HostLightingError: if the reply is not a Host Lighting one
         """
-        if page in PAGED_CAPS_PAGES:
-            return self.request_ok(CMD_GET_CAPS, bytes([page, start_entry]))
-        return self.request_ok(CMD_GET_CAPS, bytes([page]))
+        return decode_hello(self.request_ok(CMD_HELLO))
 
-    def read_lights(self, retries: int = 2) -> tuple:
-        """Read every page 5 record, walking the pages.
+    def get_page(self, page: int, start: int = 0, mask: int = 0, token: int = 0) -> bytes:
+        """Read one GET_PAGE reply.
 
-        The table can move underneath a walk that takes several reads - a
-        profile switch is enough - and a spliced result is worse than no result,
-        because ordinals from either side of the change all look equally valid.
-        Every page carries the table's fingerprint, so a walk that straddled a
-        change is thrown away and retried rather than returned.
+        Request layout: [3] page, [4..5] start record, [6..9] expected state
+        token (0 = no check), [10..11] field mask. A reply to another
+        application's request with the same numbers is told apart by its echoed
+        page, start and field groups.
 
-        :param retries: how many times to restart a walk the board changed under
-        :return: (the board's light records, the fingerprint they were read at)
-        :raises HostLightingRejected: on firmware without page 5 (pre-v1.1)
-        :raises HostLightingError: if the board stops making progress, or keeps
-            changing the table while it is being read
+        :param page: page number
+        :param start: first record
+        :param mask: field groups to return
+        :param token: expected state token, 0 for no check
+        :return: the reply report, with status 0 or 3
+        :raises HostLightingRejected: on any other status
         """
-        return self._walk(CAPS_PAGE_LIGHTS, decode_lights, 'light table', retries)
+        def echoes(reply: bytes) -> bool:
+            if reply[2] not in (STATUS_OK, STATUS_STALE) or len(reply) < REPORT_SIZE:
+                return True
+            header = decode_page_header(reply)
+            if header['page'] != page or header['start'] != start:
+                return False
+            return reply[2] == STATUS_STALE or not mask or not header['groups'] & ~mask
 
-    def read_controls(self, retries: int = 2) -> tuple:
-        """Read every page 6 record, walking the pages (protocol v1.4).
+        reply = self.request(CMD_GET_PAGE, struct.pack('<BHIH', page, start, token, mask), accept=echoes)
+        if reply[2] not in (STATUS_OK, STATUS_STALE):
+            raise self.rejected(CMD_GET_PAGE, reply)
+        return reply
 
-        Walks as read_lights does: a walk the fingerprint moved under is restarted.
+    def read_record(self, page: int, mask: int) -> tuple:
+        """Read a one-record page (1 or 8).
 
-        :param retries: how many times to restart a walk the board changed under
-        :return: (the board's control records, the fingerprint they were read at)
-        :raises HostLightingRejected: on firmware without page 6 (pre-v1.4)
-        :raises HostLightingError: if the board stops making progress, or keeps
-            changing the table while it is being read
+        :param page: page number
+        :param mask: field groups to return
+        :return: (the decoded record, the state token)
+        :raises HostLightingError: if the page returned no record
         """
-        return self._walk(CAPS_PAGE_CONTROLS, decode_controls, 'control table', retries)
+        reply = self.get_page(page, 0, mask)
+        records = decode_records(reply)
+        if not records:
+            raise HostLightingError(f"page {page} returned no record")
+        return records[0], decode_page_header(reply)['token']
 
-    def _walk(self, page_number: int, decode, what: str, retries: int) -> tuple:
-        """Read a paged table whole, restarting if its fingerprint moves mid-walk.
+    def read_table(self, page: int, mask: int, token: int):
+        """Read every record of a table page under one state token.
 
-        :param page_number: the paged GET_CAPS page to walk
-        :param decode: the decoder for one reply of that page
-        :param what: the table's name, for errors
-        :param retries: how many times to restart a walk the board changed under
-        :return: (the records, the fingerprint they were read at)
+        Every read names the token as the one it expects. If the board's
+        configuration changes mid-walk the board answers status 3 and the walk
+        is abandoned, since its records would mix two states.
+
+        :param page: page number
+        :param mask: field groups to return
+        :param token: the state token the records must be read under
+        :return: the decoded records, or None if the token is no longer current
+        :raises HostLightingError: if the board stops making progress
         """
-        for _ in range(retries + 1):
-            records = []
-            fingerprint = None
-            while True:
-                page = decode(self.get_caps_page(page_number, len(records)))
-                if fingerprint is None:
-                    fingerprint = page['fingerprint']
-                elif page['fingerprint'] != fingerprint:
-                    break  # the table moved mid-walk, so this walk is not coherent
-                if not page['records']:
-                    if len(records) < page['total']:
-                        raise HostLightingError(f"{what} stalled at {len(records)} of "
-                                                f"{page['total']} records")
-                    return records, fingerprint
-                records.extend(page['records'])
-                if len(records) >= page['total']:
-                    return records, fingerprint
-        raise HostLightingError(f"{what} kept changing while it was being read")
+        records = []
+        while True:
+            reply = self.get_page(page, len(records), mask, token)
+            if reply[2] == STATUS_STALE:
+                return None
+            header = decode_page_header(reply)
+            found = decode_records(reply)
+            if not found:
+                if len(records) < header['total']:
+                    raise HostLightingError(f"page {page} stalled at {len(records)} of "
+                                            f"{header['total']} records")
+                return records
+            records.extend(found)
+            if len(records) >= header['total']:
+                return records
 
-    def _light_reports(self, command: int, entries: list, capacity: int, width: int) -> list:
-        """Split per-light entries into the reports needed to carry them.
+    def read_identity(self) -> tuple:
+        """Read the board label and firmware version from page 0.
 
-        Entry width is checked before anything is built. The count byte tells
-        the firmware how many fixed-width entries follow, so an entry of the
-        wrong width is not rejected - it shifts every entry after it and stages
-        garbage, with nothing on the wire to say so.
+        The board returns the requested strings that fit in one reply, in bit
+        order, and echoes which. A string that did not fit is asked for again.
 
-        :param command: the staging command, for the error message
-        :param entries: per-light tuples, one report entry each
-        :param capacity: entries per report for this command
-        :param width: bytes per entry for this command
-        :return: (chunk, payload) for each report to send
+        :return: (board label, firmware version), '?' for one the board did not give
         """
-        wrong = next((entry for entry in entries if len(entry) != width), None)
-        if wrong is not None:
-            raise ValueError(f"command 0x{command:02X} takes {width}-byte entries, got {len(wrong)}")
-        return [(entries[start:start + capacity],
-                 bytes([len(entries[start:start + capacity])])
-                 + b''.join(bytes(entry) for entry in entries[start:start + capacity]))
-                for start in range(0, len(entries), capacity)]
+        strings = {}
+        missing = (1 << IDENTITY_LABEL) | (1 << IDENTITY_FIRMWARE)
+        while missing:
+            found = decode_identity(self.get_page(PAGE_IDENTITY, 0, missing))
+            if not found:
+                break
+            strings.update(found)
+            for group in found:
+                missing &= ~(1 << group)
+        return strings.get(IDENTITY_LABEL, '?'), strings.get(IDENTITY_FIRMWARE, '?')
 
-    def send_lights(self, entries: list, rgbw: bool = False) -> None:
-        """Stage per-light colours by ordinal without waiting for the replies.
+    def claim(self, action: int, token: int, name: bytes = b'', flags: int = 0) -> dict:
+        """Claim the board, take it over or give it up.
 
-        The streaming counterpart to set_lights. Staging is fire-and-forget for
-        throughput, the same as SET_BUTTONS and SET_RANGE, and only the COMMIT
-        that publishes a frame is worth waiting on; a round trip per report in a
-        frame loop would cost more than the diagnosis is worth at that rate. A
-        caller that needs to know which entries the board skipped wants
-        set_lights instead.
+        Request layout: [3] action, [4..7] host token, [8..23] application name,
+        [24] claim flags. The reply echoes the action and token at [3..7], which
+        tells it from another application's CLAIM reply, then shows the holder
+        now at [8..29], laid out as page 1's Controller group.
 
-        :param entries: (ordinal, red, green, blue) tuples, or with a white
-            component when rgbw is set
-        :param rgbw: send the RGBW form of the command (protocol v1.3)
+        The generation is taken only when the holder is this application, and
+        is then sent on every request. An application that holds no claim
+        sends 0.
+
+        :param action: CLAIM_TAKE, CLAIM_TAKE_OVER or CLAIM_GIVE_UP
+        :param token: this application's non-zero token
+        :param name: this application's name, up to 16 bytes
+        :param flags: request flags (FLAG_*)
+        :return: the holder now, as decode_controller gives it
         """
-        command = CMD_SET_LIGHT_RGBW if rgbw else CMD_SET_LIGHT
-        capacity = SET_LIGHT_RGBW_MAX if rgbw else SET_LIGHT_MAX
-        for _, payload in self._light_reports(command, entries, capacity, 5 if rgbw else 4):
-            self.send(command, payload)
+        payload = (bytes([action]) + struct.pack('<I', token)
+                   + name[:CLAIM_NAME_SIZE].ljust(CLAIM_NAME_SIZE, b'\x00') + bytes([0]))
 
-    def _stage_light_entries(self, command: int, entries: list, capacity: int, width: int,
-                             outcomes: bool = False, timeout: float = 0.5) -> tuple:
-        """Stage per-light entries and read back what the board made of them.
+        def echoes(reply: bytes) -> bool:
+            # an invalid argument's reply carries no echo
+            return reply[2] != STATUS_OK or reply[3:8] == payload[:5]
 
-        :param command: CMD_SET_LIGHT or CMD_SET_LIGHT_RGBW
-        :param entries: per-light tuples, one report entry each
-        :param capacity: entries per report for this command
-        :param width: bytes per entry for this command
-        :param outcomes: whether to read the per-entry outcome mask, which only
-            protocol v1.3 fills in - older boards zero-fill it, so reading it
-            there reports every entry as skipped
-        :param timeout: seconds to wait for each report's reply
-        :return: (applied, skipped, the ordinals the board skipped), the ordinals
-            being None when the outcome mask was not read
+        reply = self.request_ok(CMD_CLAIM, payload, flags, accept=echoes)
+        _require_length(reply, 8 + CONTROLLER_SIZE, 'CLAIM')
+        holder = decode_controller(bytes(reply[8:8 + CONTROLLER_SIZE]))
+        self.generation = holder['claim_generation'] if holder['holder_token'] == token else 0
+        return holder
+
+    def configure(self, overlay: bool, keepalive_ms: int, brightness: bool) -> dict:
+        """Set the takeover mode, keepalive timeout and brightness scaling.
+
+        Layout, request and reply: [3] takeover (0 whole-frame, 1 overlay),
+        [4..5] keepalive timeout in ms, [6] apply board brightness. The reply
+        gives the settings applied, the timeout clamped to 100-10000.
+
+        :param overlay: True for overlay takeover, False for whole-frame
+        :param keepalive_ms: keepalive timeout in ms
+        :param brightness: scale host pixels by the board's brightness
+        :return: the settings the board applied
         """
-        applied = skipped = 0
-        stale = [] if outcomes else None
-        for chunk, payload in self._light_reports(command, entries, capacity, width):
-            reply = self.request_ok(command, payload, timeout)
-            _require_length(reply, 7, f"command 0x{command:02X}")
-            applied += reply[3]
-            skipped += reply[4]
-            if outcomes:
-                # [5..6] little endian, bit n set = entry n of this report applied
-                mask = reply[5] | (reply[6] << 8)
-                stale.extend(entry[0] for bit, entry in enumerate(chunk) if not (mask >> bit) & 1)
-        return applied, skipped, stale
+        reply = self.request_ok(CMD_CONFIGURE,
+                                struct.pack('<BHB', int(overlay), keepalive_ms, int(brightness)))
+        _require_length(reply, 7, 'CONFIGURE')
+        return {'overlay': reply[3] == TAKEOVER_OVERLAY, 'keepalive_ms': _u16(reply, 4),
+                'brightness_applied': bool(reply[6])}
 
-    def set_lights(self, entries: list, outcomes: bool = False, timeout: float = 0.5) -> tuple:
-        """Stage per-light colours by page 5 ordinal (protocol v1.2).
+    def subscribe(self, events: int) -> int:
+        """Enable events. The subscription is shared by every application on the board, so this only adds.
 
-        An ordinal at or past the board's light total is counted as skipped by
-        the board rather than treated as an error.
-
-        :param entries: (ordinal, red, green, blue) tuples
-        :param outcomes: whether to read the outcome mask; only pass True for a
-            board negotiated at protocol v1.3 or later
-        :param timeout: seconds to wait for each report's reply
-        :return: (applied, skipped, the ordinals the board skipped or None)
-        :raises HostLightingRejected: on firmware without SET_LIGHT (pre-v1.2)
+        :param events: bit n enables event n (EVENT_STATE_CHANGED is 0)
+        :return: the events now enabled
         """
-        return self._stage_light_entries(CMD_SET_LIGHT, entries, SET_LIGHT_MAX, 4, outcomes, timeout)
-
-    def set_lights_rgbw(self, entries: list, outcomes: bool = False, timeout: float = 0.5) -> tuple:
-        """Stage per-light colours with a white component (protocol v1.3).
-
-        Boards whose chain has no white channel ignore W, the same rule as
-        SET_RANGE_RGBW, so sending it is always safe on the wire. Whether the
-        board renders a host-supplied W as the host intended is a separate
-        question, and a version-dependent one.
-
-        :param entries: (ordinal, red, green, blue, white) tuples
-        :param outcomes: whether to read the outcome mask
-        :param timeout: seconds to wait for each report's reply
-        :return: (applied, skipped, the ordinals the board skipped or None)
-        :raises HostLightingRejected: on firmware without SET_LIGHT_RGBW (pre-v1.3)
-        """
-        return self._stage_light_entries(CMD_SET_LIGHT_RGBW, entries, SET_LIGHT_RGBW_MAX, 5,
-                                         outcomes, timeout)
+        reply = self.request_ok(CMD_SUBSCRIBE, struct.pack('<H', events))
+        _require_length(reply, 5, 'SUBSCRIBE')
+        return _u16(reply, 3)
 
 
 def _import_hid():
@@ -1026,7 +1147,7 @@ def _import_hid():
 
 
 def find_devices() -> list:
-    """Enumerate all Host Lighting interfaces on the system.
+    """Enumerate all Host Lighting interfaces of this protocol major on the system.
 
     :return: list of hidapi enumeration dicts for matching interfaces
     """
@@ -1035,183 +1156,170 @@ def find_devices() -> list:
             if info.get('usage_page') == USAGE_PAGE and info.get('usage') == USAGE]
 
 
-def read_identity(device: HostLightingDevice) -> tuple:
-    """Read the board's identity from GET_CAPS page 0.
+def find_other_majors() -> list:
+    """Find the Host Lighting interfaces that speak another protocol major.
 
-    Page 0 reply layout: [3] caps format, [4..11] factory-unique board ID,
-    then two NUL-terminated strings (board label, firmware version).
+    The usage is the major version, so the usage page alone finds them. They
+    are not opened.
 
-    :param device: an opened HostLightingDevice
-    :return: (factory board ID as hex, board label, firmware version)
+    :return: the usage each such interface presents
     """
-    reply = device.get_caps_page(CAPS_PAGE_IDENTITY)
-    board_id = reply[4:12].hex().upper()
-    strings = reply[12:].split(b'\x00')
-    label = strings[0].decode('ascii', 'replace')
-    firmware = strings[1].decode('ascii', 'replace') if len(strings) > 1 else ''
-    return board_id, label, firmware
+    hid = _import_hid()
+    return [info.get('usage') for info in hid.enumerate()
+            if info.get('usage_page') == USAGE_PAGE and info.get('usage') != USAGE]
 
 
-def read_state(device: HostLightingDevice) -> dict:
-    """Read and decode GET_CAPS page 1, the board's runtime state.
+def other_majors_note(usages: list) -> str:
+    """Say what was found on another protocol major, and what to do about it.
 
-    :param device: an opened HostLightingDevice
-    :return: the decoded page, including the LED-map fingerprint
+    :param usages: the usages find_other_majors returned
+    :return: a one-line note, empty when there were none
     """
-    return decode_state(device.get_caps_page(CAPS_PAGE_STATE))
+    if not usages:
+        return ''
+    note = (f"{len(usages)} Host Lighting interface(s) found speaking another protocol major, "
+            f"which this version does not drive.")
+    if USAGE_PROTOCOL_1 in usages:
+        note += (" Pre-release protocol 1.x firmware is one of them: update its firmware to an "
+                 "HLP 2.0 build, or use hlp-spice2x v0.3.0 with it.")
+    return note
 
 
-def read_led_map(device: HostLightingDevice) -> dict:
-    """Read and decode GET_CAPS page 2, the per-control LED map.
+def no_interface() -> str:
+    """Build the message for a run that found no board to drive.
 
-    :param device: an opened HostLightingDevice
-    :return: the decoded page
+    :return: NO_INTERFACE, with a note on boards of another major where there are any
     """
-    return decode_led_map(device.get_caps_page(CAPS_PAGE_LED_MAP))
+    note = other_majors_note(find_other_majors())
+    return f"{note} {NO_INTERFACE}" if note else NO_INTERFACE
 
 
-def read_protocol_version(device: HostLightingDevice) -> tuple:
-    """Read the board's protocol version from its PING reply.
+def _probe(info: dict):
+    """Open one interface and keep it if it answers HELLO as a board of this major.
 
-    PING reply layout: [3..6] the ASCII magic "GPHL", [7] major, [8] minor.
-
-    :param device: an opened HostLightingDevice
-    :return: the (major, minor) the board reports
-    :raises HostLightingError: if the reply is not a Host Lighting one
+    :param info: a hidapi enumeration dict
+    :return: (decoded HELLO, the opened device), or None with the device closed
     """
-    reply = device.request_ok(CMD_PING)
-    _require_length(reply, 9, 'PING')
-    if reply[3:7] != PING_MAGIC:
-        raise HostLightingError("handshake failed: this interface did not answer as "
-                                "a Host Lighting one")
-    return reply[7], reply[8]
-
-
-def read_light_table(device: HostLightingDevice, caps: HostLightingCapabilities) -> list:
-    """Read the board's light table, where it has one to report.
-
-    Gated on the page 1 feature bit as well as the version, because a cleared
-    bit is a promise the page returns nothing rather than a hint that it might.
-    Firmware too old for the page answers INVALID_ARG, which the protocol says
-    to read as "not supported by this firmware" rather than as a failure, so the
-    oldest boards take the quietest path rather than the loudest one.
-
-    :param device: an opened HostLightingDevice
-    :param caps: the negotiated capabilities
-    :return: the board's light records, empty where it has none to give
-    """
-    if not caps.light_table:
-        return []
+    device = HostLightingDevice(info['path'])
     try:
-        records, _ = device.read_lights()
-    except HostLightingRejected:
-        return []
-    return records
-
-
-def read_control_table(device: HostLightingDevice, caps: HostLightingCapabilities) -> list:
-    """Read the board's control table, where it has one to report.
-
-    Advisory: the bridge uses page 6 only for the startup profile check, so any
-    failure short of the board going away reads as no table. A page 6 fault
-    must never cost a connect or a re-resolve of the lights.
-
-    :param device: an opened HostLightingDevice
-    :param caps: the negotiated capabilities
-    :return: the board's control records, empty where it has none or they could not be read
-    :raises HostLightingDisconnected: if the board has gone away
-    """
-    if not caps.control_table:
-        return []
-    try:
-        records, _ = device.read_controls()
-    except HostLightingDisconnected:
-        raise
+        hello = device.hello()
     except HostLightingError:
-        return []
-    return records
+        device.close()
+        return None
+    if hello['major'] != PROTOCOL_MAJOR:
+        device.close()
+        return None
+    return hello, device
 
 
-def negotiate(device: HostLightingDevice, force: bool = False) -> HostLightingCapabilities:
-    """Agree what the board can do, once, before any streaming starts.
+def negotiate(device: HostLightingDevice, addressing=()) -> HostLightingCapabilities:
+    """Learn what the board offers, once, before any streaming starts.
 
-    A minor version above the highest supported is clamped down rather than
-    refused: within a major version the protocol only ever adds, so a newer
-    board still honours everything this client knows how to ask for. A different
-    major version is refused, because it is allowed to have changed the meaning
-    of commands this client sends without asking.
+    The major version is confirmed and the capability bitmaps are checked for
+    what the bridge uses. The minor version gates nothing.
 
     :param device: an opened HostLightingDevice
-    :param force: run against an unsupported major version anyway
-    :return: the negotiated HostLightingCapabilities
-    :raises HostLightingIncompatible: on an unsupported major version, unless forced
+    :param addressing: the addressing modes the profile stages by
+    :return: the board's HostLightingCapabilities
+    :raises HostLightingIncompatible: on another major version, or a board
+        that does not list something the bridge needs
     :raises HostLightingError: if the board does not answer as a Host Lighting one
     """
-    major, minor = read_protocol_version(device)
-    unsupported = major != SUPPORTED_MAJOR
-    if unsupported and not force:
+    hello = device.hello()
+    if hello['major'] != PROTOCOL_MAJOR:
         raise HostLightingIncompatible(
-            f"board speaks Host Lighting v{major}.{minor}, and this bridge supports "
-            f"v{SUPPORTED_MAJOR}.0 to v{SUPPORTED_MAJOR}.{MAX_SUPPORTED_MINOR}. A different "
-            f"major version may have changed commands this bridge relies on, so it is not "
-            f"driven blind. Pass --force to run anyway.")
-    caps = HostLightingCapabilities(major=major, minor=min(minor, MAX_SUPPORTED_MINOR),
-                                    reported=(major, minor), state=read_state(device),
-                                    led_map=read_led_map(device), forced=unsupported)
-    caps.lights = read_light_table(device, caps)
-    caps.controls = read_control_table(device, caps)
+            f"board speaks Host Lighting v{hello['major']}.{hello['minor']}, and this bridge "
+            f"speaks v{PROTOCOL_MAJOR}.x only")
+    missing = lacking(hello, addressing)
+    if missing:
+        raise HostLightingIncompatible(
+            f"this board's firmware (Host Lighting v{hello['major']}.{hello['minor']}) does not "
+            f"offer what this bridge and profile need: {', '.join(missing)}")
+    caps = HostLightingCapabilities(hello)
+    caps.refresh(device)
     return caps
 
 
 def open_device(board_id_prefix: str = '') -> HostLightingDevice:
-    """Open a Host Lighting device, disambiguating by board ID if needed.
+    """Open a board's Host Lighting interface, disambiguating by board ID if needed.
 
-    :param board_id_prefix: optional hex prefix of the page 0 factory board ID
+    A board is bound by the factory-unique ID in its HELLO reply, never by
+    device path, which changes with the USB port.
+
+    :param board_id_prefix: optional hex prefix of the HELLO board ID
     :return: an opened HostLightingDevice
     """
     infos = find_devices()
     if not infos:
-        raise HostLightingError(NO_INTERFACE)
+        raise HostLightingError(no_interface())
     candidates = []
     for info in infos:
-        device = HostLightingDevice(info['path'])
-        try:
-            board_id, label, _ = read_identity(device)
-        except HostLightingError:
-            device.close()
+        found = _probe(info)
+        if found is None:
             continue
-        if board_id.startswith(board_id_prefix.upper()):
-            candidates.append((board_id, label, device))
+        hello, device = found
+        if hello['board_id'].startswith(board_id_prefix.upper()):
+            candidates.append((hello['board_id'], device))
         else:
             device.close()
     if not candidates:
         raise HostLightingError(f"no board matches ID prefix '{board_id_prefix}'")
     if len(candidates) > 1:
-        boards = ', '.join(f"{board_id} ({label})" for board_id, label, _ in candidates)
-        for _, _, device in candidates:
+        boards = []
+        for board_id, device in candidates:
+            try:
+                boards.append(f"{board_id} ({device.read_identity()[0]})")
+            except HostLightingError:
+                boards.append(board_id)
             device.close()
-        raise HostLightingError(f"multiple boards found: {boards} - select one with --board-id")
-    return candidates[0][2]
+        raise HostLightingError(f"multiple boards found: {', '.join(boards)}. "
+                                f"Select one with --board-id")
+    return candidates[0][1]
+
+
+def find_board(board_id: str):
+    """Open the board with the given ID, if it is on the bus.
+
+    :param board_id: the whole board ID from the board's HELLO reply
+    :return: an opened HostLightingDevice, or None while the board is absent
+    """
+    for info in find_devices():
+        try:
+            found = _probe(info)
+        except OSError:
+            continue    # the interface left between the enumeration and the open
+        if found is None:
+            continue
+        hello, device = found
+        if hello['board_id'] == board_id:
+            return device
+        device.close()
+    return None
 
 
 def describe_boards() -> list:
-    """Identify every attached board from PING and page 0, taking none of them over.
+    """Identify every attached board from HELLO and page 0, taking none of them over.
 
-    An interface that does not answer as a Host Lighting one is left out, as
-    open_device leaves it out.
+    An interface that does not answer as a Host Lighting one of this major is
+    left out, as open_device leaves it out. A board whose page 0 cannot be read
+    is listed with '?' for its label and firmware.
 
-    :return: one dict per board: board_id, label, firmware, and version as (major, minor)
+    :return: one dict per board, with board_id, label, firmware, and version as (major, minor)
     """
     boards = []
     for info in find_devices():
-        device = HostLightingDevice(info['path'])
-        try:
-            version = read_protocol_version(device)
-            board_id, label, firmware = read_identity(device)
-        except HostLightingError:
+        found = _probe(info)
+        if found is None:
             continue
+        hello, device = found
+        label, firmware = '?', '?'
+        try:
+            if PAGE_IDENTITY in hello['pages']:
+                label, firmware = device.read_identity()
+        except HostLightingError:
+            pass
         finally:
             device.close()
-        boards.append({'board_id': board_id, 'label': label, 'firmware': firmware,
-                       'version': version})
+        boards.append({'board_id': hello['board_id'], 'label': label, 'firmware': firmware,
+                       'version': (hello['major'], hello['minor'])})
     return boards

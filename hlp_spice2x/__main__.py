@@ -17,8 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Bridge spice2x cabinet lighting onto a GP2040-CE board.")
     parser.add_argument("--host", default="127.0.0.1", help="spice2x API host (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=1337,
-                        help="the port passed to spice2x's -api (default 1337, the usual choice; "
-                             "spice2x itself has no default)")
+                        help="the port passed to spice2x's -api (default 1337, the usual choice, since "
+                             "spice2x has no default)")
     parser.add_argument("--password", default="", help="spice2x API password, if -apipass was used")
     parser.add_argument("--profile", help="JSON profile mapping light names to controls")
     parser.add_argument("--list-lights", action="store_true",
@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--board-id", default="",
                         help="hex prefix of the board ID, to pick one of several")
     parser.add_argument("--fps", type=float,
-                        help="poll rate (default: the board's own render rate, capped at 60)")
+                        help="poll rate (default: the board's own render rate, capped at 120)")
     parser.add_argument("--timeout", type=int, default=2000,
                         help="takeover keepalive timeout in ms (default 2000)")
     parser.add_argument("--overlay", action="store_true",
@@ -41,8 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true",
                         help="print frames instead of driving a board")
     parser.add_argument("--force", action="store_true",
-                        help="run even against a protocol major version this bridge does not "
-                             "support, which is unsupported and for testing only")
+                        help="take the board's lights over from another application that "
+                             "holds them, instead of stopping")
     return parser
 
 
@@ -57,9 +57,9 @@ def main(argv=None) -> int:
 
     if args.fps is not None and args.fps <= 0:
         parser.error("--fps must be greater than zero")
-    # the timeout travels as a 16-bit field, and the firmware floors it at 100 ms
-    if not 100 <= args.timeout <= 0xFFFF:
-        parser.error("--timeout must be between 100 and 65535 ms")
+    # the firmware clamps the timeout to this range, so a value outside it is refused here
+    if not 100 <= args.timeout <= 10000:
+        parser.error("--timeout must be between 100 and 10000 ms")
 
     try:
         if args.list_boards:
@@ -73,8 +73,8 @@ def main(argv=None) -> int:
         print(error, file=sys.stderr)
         return 1
     except OSError as error:
-        # not attributed to either side: an OSError here could be the socket or
-        # hidapi, and guessing wrong sends the user looking in the wrong place
+        # An OSError here can come from the socket or from hidapi, so it is
+        # attributed to neither.
         print(f"error: {error}", file=sys.stderr)
         return 1
 
@@ -83,7 +83,7 @@ def list_boards() -> int:
     """Handle --list-boards, which needs no game and takes no board over."""
     boards = hlp.describe_boards()
     if not boards:
-        print(hlp.NO_INTERFACE, file=sys.stderr)
+        print(hlp.no_interface(), file=sys.stderr)
         return 1
     width = max(len(board['label']) for board in boards)
     print(f"{len(boards)} board(s):")
@@ -93,6 +93,9 @@ def list_boards() -> int:
               f"{board['firmware']}")
     if len(boards) > 1:
         print("pick one with --board-id and the start of its ID")
+    note = hlp.other_majors_note(hlp.find_other_majors())
+    if note:
+        print(note)
     return 0
 
 
@@ -102,14 +105,14 @@ def inspect(args) -> int:
     try:
         states = connection.lights_read()
         if not states:
-            print("spice2x reported no lights - is a game running?", file=sys.stderr)
+            print("spice2x reported no lights. A game must be running.", file=sys.stderr)
             return 1
         if args.write_profile:
             profile_module.write_skeleton(args.write_profile, states)
             print(f"wrote {args.write_profile} with {len(states)} lights")
             print("fill in each 'button' with a control name (Up Down Left Right B1-B4 L1 R1")
             print("L2 R2 S1 S2 L3 R3 A1 A2 PLED1-4 TURBO CASE, plus A3 A4 and E1-E12 where")
-            print("the board reports them); leave it empty to ignore")
+            print("the board reports them). Leave it empty to ignore a light.")
         else:
             print(f"{len(states)} lights:")
             for name, state in sorted(states.items()):
@@ -135,14 +138,10 @@ def run_bridge(args) -> int:
     try:
         bridge.run(connection, profile, device=device, fps=args.fps, timeout_ms=args.timeout,
                    overlay=args.overlay, full_brightness=args.full_brightness,
-                   force=args.force)
+                   force=args.force, reopen=hlp.find_board)
     finally:
+        # the run gives its claim on the lights up itself, which restores the animations
         if device is not None:
-            try:
-                device.request_ok(hlp.CMD_RELEASE)
-                print("released - on-board animations restored")
-            except hlp.HostLightingError:
-                pass
             device.close()
         connection.close()
     return 0

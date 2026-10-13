@@ -1,46 +1,43 @@
 # Profiles
 
-A profile maps one game's light names onto controls on your board. Light names
-come from the game, so a profile is per-game.
+A profile maps one game's light names onto the controls of a board. Light
+names come from the game, so a profile is per game.
 
-How far it travels between boards depends on which kind of entry you write.
-Naming a control lets the firmware resolve it to whatever LEDs that board
-actually has, so those entries work anywhere. Picking one light of a control, or
-addressing raw LED indexes, ties the entry to the board it was written against
-in different ways and to different degrees. The three forms are set out below.
+How portable a profile is depends on the form of its entries, set out under
+[Entries](#entries).
 
-`example.json` is illustrative only. Its names are made up, and no real game
-reports exactly those.
+`example.json` is an illustration. Its names are invented and no real game
+reports them.
 
-## Capturing one
+## Capturing a profile
 
-Start the game under spice2x with the API enabled, then:
+Start the game under spice2x with the API enabled, then list its lights:
 
 ```
 hlp-spice2x --port 1337 --list-lights
 ```
 
-That prints every light and its current value. Pressing buttons and watching
-the values change is the quickest way to work out which name is which.
+This prints every light and its current value. Pressing buttons while
+watching the values shows which name is which.
 
-Then generate a skeleton with every light listed:
+Write a skeleton listing every light:
 
 ```
 hlp-spice2x --port 1337 --write-profile mygame.json
 ```
 
-Fill in the `button` field for the lights you want and leave the rest empty.
-Check the result without touching a board:
+Fill in the `button` field of each light to map and leave the rest empty.
+Check the result with no board:
 
 ```
 hlp-spice2x --port 1337 --profile mygame.json --dry-run
 ```
 
 A dry run has no board, so it shows an `index` entry as the control and index
-you wrote, such as `Up[1]`, rather than the light that would end up lit. Which
-light that is only becomes knowable once a board is attached.
+the profile gives, such as `Up[1]`. The light it picks is known only with a
+board attached.
 
-## What an entry can say
+## Entries
 
 ```json
 {
@@ -52,75 +49,75 @@ light that is only becomes knowable once a board is attached.
 }
 ```
 
-**`button`** names a control and lets the board resolve it:
+### button
 
-> `Up` `Down` `Left` `Right` `B1` `B2` `B3` `B4` `L1` `R1` `L2` `R2` `S1` `S2`
-> `L3` `R3` `A1` `A2`, plus `PLED1`-`PLED4`, `TURBO`, and `CASE` for the whole
-> case strip.
->
-> `A3`, `A4` and `E1`-`E12` are also accepted, on boards whose firmware reports
-> them. That needs HLP v1.1 or newer, and they only stage by name from v1.2 - on
-> v1.1 the bridge reaches them by raw index instead, which it works out for
-> itself.
+`button` names a control or a kind of light, and the board resolves it:
 
-Where the board says a control owns several lights, naming it lights all of
-them. Leave the field empty to ignore that light.
+- `Up` `Down` `Left` `Right` `B1` `B2` `B3` `B4` `L1` `R1` `L2` `R2` `S1` `S2`
+  `L3` `R3` `A1` `A2` `A3` `A4` and `E1`-`E12` name controls.
+- `PLED1`-`PLED4`, `TURBO` and `CASE` name a kind of light: a player LED, the
+  turbo lights, and the case strip.
 
-**`index`** picks out one light of a control, counting as the board's own light
-table lists them, starting at 0. Needs HLP v1.2 or newer.
+Where a control has several lights, its name lights all of them. `CASE` and
+`TURBO` reach every light of their kind. An empty field ignores that light.
 
-**`range`** addresses raw LED indexes as `[start, count]`, for lights that do not
-correspond to any control. The bridge warns at startup if a range reaches past
-the last LED the board has, because staging is fire-and-forget and the board
-simply drops what it cannot address, so the lights would otherwise just never
-come on.
+### index
 
-**`colour`** is `RRGGBB` hex, scaled by how brightly the game is driving that
-light. `color` is accepted too. Defaults to white. It must be exactly six hex
-digits, or eight for `RRGGBBWW` - a `0x` prefix, underscores, surrounding spaces
-or any other length are refused, because telling a six-digit colour from an
-eight-digit one is only safe when the length means something.
+`index` picks one light of a control, or of a kind, counting from 0 as the
+board's Lights page lists them.
 
-Cabinet lights are mostly single-colour, so the game only reports an intensity
-from 0.0 to 1.0 and the colour is your choice. Two lights mapped to the same
-control add together and clamp.
+### range
 
-### How far each form travels
+`range` addresses raw LED indexes as `[start, count]`, for lights that belong
+to no control. The bridge warns at startup if a range reaches past the last
+LED the board has. LEDs past that can be staged but are never shown, and the
+part of a range past the board's addressable limit is not sent.
 
-| Form | Portable? |
+### colour
+
+`colour` is `RRGGBB` hex, scaled by how brightly the game drives that light.
+`color` is accepted too. The default is white. A colour is six hex digits, or
+eight for `RRGGBBWW`. A `0x` prefix, underscores, surrounding spaces and any
+other length are refused.
+
+Cabinet lights are mostly single-colour, so the game reports an intensity
+from 0.0 to 1.0 and the profile supplies the colour. Two lights mapped to the
+same control add together and clamp.
+
+### Portability
+
+| Form | Portability |
 |---|---|
-| `button` | Anywhere. The board resolves the name against its own wiring. |
-| `index` | The control name travels; the index does not. It picks a light by a position only that board's light table defines, so on another board it may pick a different light - and it will still be a valid light, so nothing reports it. |
-| `range` | Nowhere. Raw LED indexes mean whatever that board's layout says they mean. |
+| `button` | Any board. The board resolves the name against its own configuration. |
+| `index` | The control name is portable and the index is not. On another board it can pick a different light, and nothing reports it. |
+| `range` | One board. Raw LED indexes depend on that board's layout. |
 
-## Finding out what your board has
+## Reading a board's lights
 
-Running the bridge prints which controls own more than one light. For the full
-picture - every light, which control owns it, and its ordinal - use the probe,
+The bridge prints at startup which controls have more than one light. The
+probe prints every light, the control it belongs to, and its ordinal. Run it
 from a checkout of this repository or the tools download:
 
 ```
 python -m tests.hardware_probe
 ```
 
-It is read-only, so it is safe to run while a game is going. It prints the
-board's light table grouped by control, marking any control that owns more than
-one light, which is exactly what you need before writing an `index` entry. On
-v1.4 firmware it also prints the control table: every control the board has, lit
-or not.
+It is read-only and can run while a game is running. It prints the board's
+Lights page grouped by control and marks any control with more than one
+light, which an `index` entry needs. It also prints the Controls page, every
+control the board has, lit or not.
 
-## Boards that give one control several lights
+## Controls with several lights
 
-Some layouts wire two buttons to the same control, such as a second Up. Naming
-the control lights all of them. To light just one, add an `index`:
+Some layouts give one control two buttons, such as a second Up. The control's
+name lights all of them. An `index` lights one:
 
 ```json
 "Extra Up": { "button": "UP", "index": 1, "colour": "0000FF" }
 ```
 
-An `index` entry always wins over the control name, even when it is asking for
-black. So a profile can name `UP` to light both and then override one of them,
-which is the usual reason to reach for it.
+An `index` entry wins over the control name, including when it asks for
+black. A profile can name `UP` to light both and then override one of them.
 
 ## Boards with a white channel
 
@@ -130,51 +127,40 @@ On a GRBW or RGBW chain, an eight-digit colour asks for the white emitter:
 "Marquee": { "button": "S2", "colour": "FFFFFF00" }
 ```
 
-The achromatic part of the colour is moved onto the white emitter, so white is
-sent as white rather than as equal parts of the three colour emitters. Any white
-you give explicitly is added on top of that, so `FF0000FF` is red plus full
-white and `FF000080` is red plus half.
+The bridge moves the achromatic part of the colour onto the white emitter. A
+white component given in the colour is added to it, so `FF0000FF` is red plus
+full white and `FF000080` is red plus half.
 
-Where two entries name the same light and only one of them asks for white, the
-white is kept. Whether a light uses the white channel is a property of the light,
-not of whichever entry happens to be listed last.
+Where two entries name the same light and only one asks for white, the white
+is kept.
 
-This needs HLP v1.3 as well as a chain with a white emitter. On anything older
-the firmware maps achromatic colours onto the white emitter itself and ignores
-what the host sent, so the bridge drops the white and sends plain RGB, which is
-what renders correctly there. It says so once at startup rather than per frame.
+On a chain with no white emitter the bridge drops the white and sends RGB. It
+reports this once at startup.
 
-## When a profile does not fit the board
+A six-digit colour is always sent as RGB. On a white chain the firmware moves
+a pure grey (`R` = `G` = `B`) onto the white emitter, as it does for its own
+animations, so a six-digit white still lights the white LED.
 
-Anything wrong with the profile itself - an unknown control name, a malformed
-range, a colour that is not hex - is reported before the bridge connects to
-anything.
+## A profile that does not fit the board
 
-A mapped control the board cannot light is not an error. The bridge names it at
-startup and carries on: as having no LED on this board, or, from v1.4, as not
-being on this board at all.
+A fault in the profile itself is reported before the bridge connects: an
+unknown control name, a malformed range, or a colour that is not hex.
 
-Whether the board can honour an `index` entry is a different question, and one
-only the board can answer, so it is settled at connect:
+A mapped control the board cannot light is not an error. The bridge names it
+at startup, as having no LED on this board or as not being on this board, and
+carries on.
 
-- **Firmware older than v1.2** cannot colour a single light at all. The bridge
-  refuses to start and names the version needed. Lighting something other than
-  what the profile asked for would be worse than not starting.
-- **A board whose light table is synthesised** from its per-control
-  configuration holds one row per control however many lights that control
-  really drives, so it can never describe the second one. The bridge refuses and
-  says so, because this is a limitation of the board rather than of its firmware
-  and upgrading would change nothing.
-- **An index past the end of a control** is refused, and the message says how
-  many lights that control actually has.
-- **A board that has not published its light table yet** is none of the above.
-  Its light registry is filled in while it sets its LEDs up, so a host that
-  connects in the moment before that finishes sees nothing there. Those entries
-  are held back with a warning and start working on their own once the table
-  appears.
+An `index` entry is checked at connect, against the board. An index past the
+end of a control is refused, and the message gives the number of lights that
+control has.
+
+A board can change while the bridge runs. Switching its input profile can
+move a control to another button. The bridge reads the board again and
+carries on. An `index` entry the board can no longer honour is held back with
+a warning.
 
 ## Contributing
 
-Pull requests adding a profile are welcome. Please name the file after the
-game, and note in the PR which game and version you captured it from, since
+Pull requests adding a profile are welcome. Name the file after the game, and
+state in the pull request which game and version it was captured from, since
 light names can change between releases.

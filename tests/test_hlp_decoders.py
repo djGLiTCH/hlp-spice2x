@@ -1,13 +1,9 @@
-"""Test the capability decoders and the per-light staging commands.
+"""Test the protocol's framing, decoders and staging encoders as pure functions.
 
-These are the parts of the protocol the bridge reads rather than writes, and
-they are all pure functions over a 64-byte report, so they can be tested
-against hand-built replies without a board or a transport.
-
-The cases worth pinning are the ones where a field means something other than
-what its value looks like: a zero that means "not reported", a flag that is an
-assertion rather than a negation, and a stride that comes off the wire so an
-older decoder cannot be misaligned by a newer board.
+The fixtures are the worked examples of the protocol reference
+(docs/host-lighting.md, captured from a Haute42 COSMOX), written out by hand.
+They are built by hand, since decoding a reply the fake board generated would
+test the fake as much as the decoder.
 
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
@@ -16,584 +12,353 @@ import pytest
 
 from hlp_spice2x import hlp
 
-from .fake_board import M_ULTRA_CONTROLS, FakeBoard, attach
-from .hardware_probe import check_control_table, main as probe_main
+BOARD_ID = '433031343539302E'
+TOKEN = 'cd ab 34 12'
 
 
-def caps_reply() -> bytearray:
-    """Build an empty GET_CAPS reply with its command echo in place."""
-    reply = bytearray(hlp.REPORT_SIZE)
-    reply[0] = hlp.CMD_GET_CAPS | hlp.RESPONSE_FLAG
-    return reply
+def report(*parts, token=None) -> bytes:
+    """Build a 64-byte report from hex strings, zero-filled, with an optional state token."""
+    data = bytearray(b''.join(bytes.fromhex(part) for part in parts).ljust(64, b'\x00'))
+    if token:
+        data[60:64] = bytes.fromhex(token)
+    return bytes(data)
 
 
-def state_page(input_mode=0, profile=0, brightness=0, player=0, fingerprint=0,
-               animation=0, features=0, framework=0, namespace=0, render_hz=0) -> bytes:
-    """Build a GET_CAPS page 1 reply."""
-    reply = caps_reply()
-    reply[3], reply[4], reply[5], reply[6] = input_mode, profile, brightness, player
-    reply[7:11] = fingerprint.to_bytes(4, 'little')
-    reply[11] = animation
-    reply[12:16] = features.to_bytes(4, 'little')
-    reply[16], reply[17], reply[18] = framework, namespace, render_hz
-    return bytes(reply)
+def name(text: str) -> str:
+    """Hex of a 16-byte NUL-padded application name."""
+    return text.encode().ljust(16, b'\x00').hex()
 
 
-def led_map_page(leds_per_button=1, colour_format=0, layout=0, led_extent=46,
-                 brightness_maximum=255, buttons=None, players=None, turbo=hlp.UNMAPPED,
-                 case=None, fingerprint=0) -> bytes:
-    """Build a GET_CAPS page 2 reply, defaulting every slot to unmapped."""
-    reply = caps_reply()
-    reply[3], reply[4], reply[5] = leds_per_button, colour_format, layout
-    reply[6], reply[7] = led_extent, brightness_maximum
-    for index in range(len(hlp.BUTTON_NAMES)):
-        first, count = (buttons or {}).get(index, (hlp.UNMAPPED, 0))
-        reply[8 + index * 2], reply[9 + index * 2] = first, count
-    for slot in range(4):
-        reply[44 + slot] = (players or {}).get(slot + 1, hlp.UNMAPPED)
-    reply[48] = turbo
-    reply[49], reply[50] = case or (hlp.UNMAPPED, 0)
-    reply[51:55] = fingerprint.to_bytes(4, 'little')
-    return bytes(reply)
+HELLO = report('81 41 00', '47 50 48 4c 02 00', BOARD_ID, '10 7f',
+               '3e 00 0f 00 03 00 0f 00 00 00 00 00 00 00 03 00', '07 1f 00 00',
+               'f3 00 07 00 01 00', '00 00')
+SUMMARY = report('82 42 00', '08 00 00 01 00', '01 24 03 00', '10 00 64 00 28 00', '00 63 0a 0a',
+                 '11 00 09 00', '01 00 15 00 10 00 05 00', '10 00 04 00', '1b 1f',
+                 '00 00 00 00 00 00 00 00', token=TOKEN)
+CLAIM_REPLY = report('83 45 00', '00 b2 00 00 00', 'a1 00 00 00', name('Alpha'), '01 02')
+REFUSED = report('90 46 04', 'b2 00 00 00', name('Beta'), '00 03')
+STATE_CHANGED = report('80 00 00', '01 00 00 01 00', '01 23 07 00', '00 00 01 02', '00 00 0a 01 0a',
+                       'b2 00 00 00', name('Beta'), '00 03', '00 d0 07 01', token=TOKEN)
+LIGHT_KINDS = report('82 47 00', '0b 00 00 10 00', '10 02 02 00',
+                     '00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00',
+                     '00 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01', token=TOKEN)
+STALE = report('82 48 03', '09 00 00', token=TOKEN)
 
 
-def light_record(first_led=0, led_count=1, kind=0, button_id=0, gpio_pin=hlp.UNMAPPED,
-                 gpio_action=0, player_index=hlp.UNMAPPED, case_group=hlp.UNMAPPED,
-                 x=0, y=0, flags=hlp.LIGHT_FLAG_PER_LIGHT, width=12) -> bytes:
-    """Build one page 5 record, padded out to a wider stride on request."""
-    record = (bytes([first_led, led_count, kind, button_id, gpio_pin])
-              + gpio_action.to_bytes(2, 'little', signed=True)
-              + bytes([player_index, case_group, x, y, flags]))
-    return record + bytes(width - len(record))
+def test_a_request_carries_its_flags_at_byte_two():
+    """Test the 2.0 framing: command, sequence, flags, then the payload from [3]."""
+    request = hlp.build_request(hlp.CMD_STAGE, 0x44, bytes.fromhex('0602'), flags=0x21)
+    assert len(request) == 64
+    assert request[:5] == bytes.fromhex('10 44 21 06 02')
+    assert not any(request[5:])
 
 
-def light_page(records, total=None, start=0, fingerprint=0, stride=12) -> bytes:
-    """Build a GET_CAPS page 5 reply carrying the given records."""
-    reply = caps_reply()
-    reply[3] = len(records) if total is None else total
-    reply[4], reply[5], reply[6] = start, len(records), stride
-    for n, record in enumerate(records):
-        reply[7 + n * stride:7 + n * stride + len(record)] = record
-    reply[60:64] = fingerprint.to_bytes(4, 'little')
-    return bytes(reply)
+def test_a_payload_that_does_not_fit_is_refused():
+    """Test that a payload over 61 bytes is an error."""
+    assert hlp.build_request(1, 1, bytes(61))
+    with pytest.raises(ValueError):
+        hlp.build_request(1, 1, bytes(62))
 
 
-def control_record(gpio_pin=2, gpio_action=1, button_id=0, flags=hlp.CONTROL_FLAG_LIT,
-                   width=6) -> bytes:
-    """Build one page 6 record, padded out to a wider stride on request."""
-    record = (bytes([gpio_pin]) + gpio_action.to_bytes(2, 'little', signed=True)
-              + bytes([button_id, flags, 0]))
-    return record + bytes(width - len(record))
+def test_a_reply_is_matched_by_command_and_sequence():
+    """Test that a reply needs both the command echo and the sequence."""
+    assert hlp.match_reply(HELLO, hlp.CMD_HELLO, 0x41)
+    assert not hlp.match_reply(HELLO, hlp.CMD_HELLO, 0x42)
+    assert not hlp.match_reply(HELLO, hlp.CMD_GET_PAGE, 0x41)
+    assert not hlp.match_reply(HELLO[:2], hlp.CMD_HELLO, 0x41)
 
 
-def control_page(records, total=None, start=0, fingerprint=0, stride=6, lit=0, unlit=0) -> bytes:
-    """Build a GET_CAPS page 6 reply carrying the given records."""
-    reply = caps_reply()
-    reply[3] = len(records) if total is None else total
-    reply[4], reply[5], reply[6] = start, len(records), stride
-    reply[7], reply[8], reply[9] = lit, unlit, 1
-    for n, record in enumerate(records):
-        reply[10 + n * stride:10 + n * stride + len(record)] = record
-    reply[60:64] = fingerprint.to_bytes(4, 'little')
-    return bytes(reply)
+def test_an_event_is_told_from_a_reply():
+    """Test that [0] = 0x80 marks an event, since there is no command 0x00."""
+    assert hlp.is_event(STATE_CHANGED)
+    assert not hlp.is_event(HELLO)
 
 
-def m_ultra_control_pages(fingerprint=0x15C2496E) -> list:
-    """Build the reference board's page 6 as the three replies a walk reads."""
-    records = [control_record(gpio_pin=pin, gpio_action=action, button_id=button_id)
-               for pin, action, button_id in M_ULTRA_CONTROLS]
-    return [control_page(records[start:start + 8], total=21, start=start, fingerprint=fingerprint)
-            for start in (0, 8, 16)]
+def test_hello_decodes_the_identity_and_every_bitmap():
+    """Test HELLO against the reference's worked example."""
+    hello = hlp.decode_hello(HELLO)
+    assert (hello['major'], hello['minor']) == (2, 0)
+    assert hello['board_id'] == BOARD_ID
+    assert hello['queue_limit'] == 16
+    assert hello['flags'] == {0, 1, 2, 3, 4, 5, 6}
+    assert hello['commands'] == {0x01, 0x02, 0x03, 0x04, 0x05, 0x10, 0x11, 0x12, 0x13, 0x20, 0x21,
+                                 0x30, 0x31, 0x32, 0x33, 0x70, 0x71}
+    assert hello['pages'] == {0, 1, 2, 8, 9, 10, 11, 12}
+    assert hello['addressing'] == {0, 1, 4, 5, 6, 7}
+    assert hello['pixel_formats'] == {0, 1, 2}
+    assert hello['events'] == {0}
+    assert hello['subscribed'] == set()
 
 
-def stage_reply(command=hlp.CMD_SET_LIGHT, applied=0, skipped=0, mask=0) -> bytes:
-    """Build a reply to a per-light staging command."""
-    reply = bytearray(hlp.REPORT_SIZE)
-    reply[0] = command | hlp.RESPONSE_FLAG
-    reply[3], reply[4] = applied, skipped
-    reply[5], reply[6] = mask & 0xFF, (mask >> 8) & 0xFF
-    return bytes(reply)
+def test_hello_without_the_magic_is_not_host_lighting():
+    """Test that a reply lacking GPHL is refused."""
+    with pytest.raises(hlp.HostLightingError, match='did not answer'):
+        hlp.decode_hello(HELLO[:3] + b'XXXX' + HELLO[7:])
 
 
-class ScriptedDevice(hlp.HostLightingDevice):
-    """A device that answers from a scripted list instead of from a board.
+def test_a_truncated_hello_is_reported_not_indexed_past():
+    """Test that a short reply raises the module's own error."""
+    with pytest.raises(hlp.HostLightingError, match='HELLO reply is 20 bytes'):
+        hlp.decode_hello(HELLO[:20])
 
-    Deliberately does not run the real __init__, which would open a HID handle.
-    Replies are taken in order, so a test's script is also its expectation of
-    how many round trips the code under test makes.
+
+def test_this_firmware_lacks_nothing_the_bridge_needs():
+    """Test the capability check against the worked HELLO, for every addressing mode used."""
+    assert hlp.lacking(hlp.decode_hello(HELLO), {0, 4, 6, 7}) == []
+
+
+def test_each_missing_capability_is_named():
+    """Test that what a board does not list is named by kind and number."""
+    hello = hlp.decode_hello(HELLO)
+    hello['commands'].discard(hlp.CMD_CLAIM)
+    hello['flags'].discard(1)
+    hello['pages'].discard(hlp.PAGE_LIGHTS)
+    hello['addressing'].discard(hlp.ADDRESSING_ACTION)
+    assert hlp.lacking(hello, {hlp.ADDRESSING_ACTION}) == [
+        'command 0x03', 'request flag bit 1', 'page 11', 'addressing mode 6']
+
+
+def test_the_summary_decodes_from_its_two_groups():
+    """Test page 8 against the reference's worked example."""
+    header = hlp.decode_page_header(SUMMARY)
+    assert (header['page'], header['total'], header['count']) == (8, 1, 1)
+    assert (header['stride'], header['groups']) == (36, 0x03)
+    assert header['token'] == 0x1234ABCD
+    summary = hlp.decode_records(SUMMARY)[0]
+    assert (summary['led_extent'], summary['led_limit'], summary['render_hz']) == (16, 100, 40)
+    assert summary['colour_format'] == 0
+    assert (summary['controls'], summary['lit_controls'], summary['unlit_controls']) == (21, 16, 5)
+    assert summary['lights'] == 16
+    assert summary['page_changes'] == {page: 0 for page in range(8, 16)}
+
+
+def test_the_change_counters_are_keyed_by_page():
+    """Test that the Changes group's eight bytes land on pages 8 to 15 in order."""
+    changed = bytearray(SUMMARY)
+    changed[40:48] = bytes([1, 2, 3, 4, 5, 6, 7, 8])
+    changes = hlp.decode_records(bytes(changed))[0]['page_changes']
+    assert changes[hlp.PAGE_CONTROLS] == 3 and changes[hlp.PAGE_LIGHTS] == 4
+
+
+def test_only_the_groups_a_reply_echoes_are_decoded():
+    """Test a masked page 11 read: one group of two bytes, sixteen records."""
+    records = hlp.decode_records(LIGHT_KINDS)
+    assert [record['ordinal'] for record in records] == list(range(16))
+    assert all(record['kind'] == 0 for record in records)
+    assert [record['ordinal'] for record in records if record['duplicated']] == [3, 12, 13, 15]
+    assert 'first_led' not in records[0] and 'owner_action' not in records[0]
+
+
+def test_a_light_record_decodes_its_led_range_kind_and_owner():
+    """Test page 11 groups 0 to 2: LEDs, kind and flags, owner pin and signed action."""
+    reply = report('82 01 00', '0b 05 00 2e 00', '02 09 07 00',
+                   '03 00 01 00', '00 01', '02 01 00',
+                   '10 00 1e 00', '01 00', 'ff 00 80', token=TOKEN)
+    button, case = hlp.decode_records(reply)
+    assert button == {'ordinal': 5, 'first_led': 3, 'led_count': 1, 'kind': 0, 'duplicated': True,
+                      'owner_pin': 2, 'owner_action': 1}
+    assert case == {'ordinal': 6, 'first_led': 16, 'led_count': 30, 'kind': 1, 'duplicated': False,
+                    'owner_pin': None, 'owner_action': None}
+
+
+def test_a_control_record_decodes_its_key_action_and_flags():
+    """Test page 10 group 0: key, signed action, and the duplicated and lit flags."""
+    reply = report('82 01 00', '0a 00 00 15 00', '03 04 01 00',
+                   '02 01 00 03', '10 0d 00 00', 'c3 ff ff 02', token=TOKEN)
+    up, select, expander = hlp.decode_records(reply)
+    assert up == {'ordinal': 0, 'key': 2, 'action': 1, 'duplicated': True, 'lit': True}
+    assert select == {'ordinal': 1, 'key': 16, 'action': 13, 'duplicated': False, 'lit': False}
+    assert (expander['key'], expander['action'], expander['lit']) == (0xC3, -1, True)
+
+
+def test_records_are_stepped_by_the_stride_on_the_wire():
+    """Test that a group a later board adds after the known ones does not misalign the read.
+
+    Each record here carries group 0 (four bytes) and a three-byte group this
+    client does not know, at bit 4.
     """
-
-    def __init__(self, replies):
-        """Queue the replies this device will hand back, in order."""
-        self.replies = list(replies)
-        self.requests = []
-
-    def request_ok(self, command, payload=b'', timeout=0.5):
-        """Record the request and answer it from the script."""
-        self.requests.append((command, bytes(payload)))
-        if not self.replies:
-            raise AssertionError(f"unscripted request: command 0x{command:02X}")
-        return self.replies.pop(0)
-
-
-def test_page_1_decodes_the_fields_protocol_v1_1_appended():
-    """Test that the v1.1 tail of page 1 is decoded, not just the fingerprint."""
-    state = hlp.decode_state(state_page(fingerprint=0xDEADBEEF, features=hlp.FEATURE_LIGHT_TABLE,
-                                        framework=2, namespace=1, render_hz=40))
-    assert state['fingerprint'] == 0xDEADBEEF
-    assert state['features'] & hlp.FEATURE_LIGHT_TABLE
-    assert state['framework'] == 2
-    assert state['render_hz'] == 40
-
-
-def test_a_board_that_states_no_render_rate_reads_as_unstated():
-    """Test that a zero render rate decodes as None rather than as 0 Hz.
-
-    Zero is what pre-v1.1 firmware leaves in the zero-filled reply, and what a
-    v1.1 board reports when it does not know its own rate. Neither is a rate.
-    """
-    assert hlp.decode_state(state_page(render_hz=0))['render_hz'] is None
-
-
-def test_page_1_from_older_firmware_reads_as_nothing_reported():
-    """Test that a board predating the v1.1 fields reports no capabilities."""
-    state = hlp.decode_state(state_page(fingerprint=7))
-    assert state['fingerprint'] == 7
-    assert state['features'] == 0
-    assert state['render_hz'] is None
-
-
-def test_no_animation_selected_is_not_animation_255():
-    """Test that the 0xFF animation sentinel decodes as nothing selected."""
-    assert hlp.decode_state(state_page(animation=hlp.UNMAPPED))['animation_index'] is None
-
-
-def test_a_truncated_page_is_reported_not_indexed_past():
-    """Test that a short reply raises rather than dying on an index.
-
-    A truncated read would otherwise surface as an IndexError from inside a
-    decoder, which no caller in the bridge is positioned to catch.
-    """
-    for decoder, page in ((hlp.decode_state, 'page 1'), (hlp.decode_led_map, 'page 2'),
-                          (hlp.decode_lights, 'page 5'), (hlp.decode_controls, 'page 6')):
-        with pytest.raises(hlp.HostLightingError, match=page):
-            decoder(bytes(8))
-
-
-def test_records_that_overrun_the_report_are_refused():
-    """Test that a count and stride reaching past the report raise rather than index past it.
-
-    A record sliced from beyond the end of a 64-byte reply is empty, and reading
-    its first byte is an IndexError, which the advisory page 6 read does not
-    catch. Refusing the page here is what keeps that read advisory.
-    """
-    for decoder, builder, stride, page in ((hlp.decode_lights, light_page, 12, 'page 5'),
-                                           (hlp.decode_controls, control_page, 6, 'page 6')):
-        reply = bytearray(builder([]))
-        reply[5], reply[6] = 10, stride     # ten records at the page's own stride need more than 64 bytes
-        with pytest.raises(hlp.HostLightingError, match=f'{page} reply is 64 bytes'):
-            decoder(bytes(reply))
-
-
-def test_page_2_omits_controls_the_board_has_no_led_for():
-    """Test that unmapped controls drop out of the button map."""
-    decoded = hlp.decode_led_map(led_map_page(buttons={0: (3, 1), 4: (7, 2)}))
-    assert decoded['buttons'] == {0: (3, 1), 4: (7, 2)}
-
-
-def test_page_2_keeps_player_leds_keyed_by_player_not_by_position():
-    """Test that an absent player 1 does not slide player 2 into its place."""
-    decoded = hlp.decode_led_map(led_map_page(players={2: 40, 4: 42}))
-    assert decoded['players'] == {2: 40, 4: 42}
-
-
-def test_a_case_range_of_no_lights_is_no_case_range():
-    """Test that a case entry with a zero count decodes as absent."""
-    assert hlp.decode_led_map(led_map_page(case=(30, 0)))['case'] is None
-    assert hlp.decode_led_map(led_map_page(case=(30, 16)))['case'] == (30, 16)
-
-
-def test_the_board_reports_its_own_led_extent():
-    """Test that page 2 carries the extent that bounds a raw range."""
-    assert hlp.decode_led_map(led_map_page(led_extent=128))['led_extent'] == 128
-
-
-def test_only_the_w_formats_have_a_white_channel():
-    """Test that a white component only has somewhere to go on GRBW and RGBW."""
-    assert not hlp.has_white_channel(0)  # GRB
-    assert not hlp.has_white_channel(1)  # RGB
-    assert hlp.has_white_channel(2)      # GRBW
-    assert hlp.has_white_channel(3)      # RGBW
-
-
-def test_page_5_numbers_its_records_from_the_ordinal_the_page_starts_at():
-    """Test that ordinals continue across a paged walk rather than restarting."""
-    page = hlp.decode_lights(light_page([light_record(), light_record()], total=6, start=4))
-    assert [record['ordinal'] for record in page['records']] == [4, 5]
-
-
-def test_a_record_without_the_per_light_flag_is_synthesised():
-    """Test that the per-light flag is read as an assertion, not a negation.
-
-    A synthesised table is rebuilt from per-control configuration, so it can
-    never show a control owning more than one light. That is the caveat a
-    caller needs, so it is the absence of the flag that gets reported.
-    """
-    page = hlp.decode_lights(light_page([light_record(flags=hlp.LIGHT_FLAG_PER_LIGHT),
-                                         light_record(flags=0)]))
-    assert [record['synthesised'] for record in page['records']] == [False, True]
-
-
-def test_a_position_is_only_read_when_the_board_vouches_for_it():
-    """Test that grid coordinates without their flag are not reported as real."""
-    page = hlp.decode_lights(light_page([light_record(x=3, y=4, flags=hlp.LIGHT_FLAG_PER_LIGHT),
-                                         light_record(x=3, y=4, flags=hlp.LIGHT_FLAG_POSITION)]))
-    assert [record['position'] for record in page['records']] == [None, (3, 4)]
-
-
-def test_page_5_takes_its_stride_from_the_wire():
-    """Test that a wider record than this decoder knows does not misalign it.
-
-    The stride is on the wire precisely so a board that grows the record can
-    still be read by an older host, which is the whole compatibility contract.
-    """
-    records = [light_record(first_led=9, button_id=4, width=14),
-               light_record(first_led=11, button_id=5, width=14)]
-    page = hlp.decode_lights(light_page(records, stride=14))
-    assert page['stride'] == 14
-    assert [record['first_led'] for record in page['records']] == [9, 11]
-    assert [record['button_id'] for record in page['records']] == [4, 5]
-
-
-def test_a_stride_narrower_than_the_record_is_refused():
-    """Test that a too-narrow stride is an error rather than a short read."""
-    with pytest.raises(hlp.HostLightingError, match='stride'):
-        hlp.decode_lights(light_page([light_record()], stride=8))
-
-
-def test_read_lights_walks_every_page():
-    """Test that a table spanning several reads comes back whole and in order."""
-    device = ScriptedDevice([
-        light_page([light_record(button_id=n) for n in range(4)], total=6, start=0, fingerprint=5),
-        light_page([light_record(button_id=n) for n in (4, 5)], total=6, start=4, fingerprint=5),
-    ])
-    records, fingerprint = device.read_lights()
-    assert [record['button_id'] for record in records] == [0, 1, 2, 3, 4, 5]
-    assert fingerprint == 5
-    assert [payload[1] for _, payload in device.requests] == [0, 4]
-
-
-def test_read_lights_refuses_a_walk_that_stops_short():
-    """Test that a board that stops answering mid-table is an error, not a truncated table."""
-    device = ScriptedDevice([
-        light_page([light_record()], total=6, start=0),
-        light_page([], total=6, start=1),
-    ])
-    with pytest.raises(hlp.HostLightingError, match='stalled'):
-        device.read_lights()
-
-
-def test_read_lights_discards_a_walk_the_table_moved_under():
-    """Test that a table changing mid-walk restarts the walk.
-
-    Splicing records from either side of the change would produce a table that
-    looks self-consistent and addresses the wrong lights, which no later error
-    can catch: a stale ordinal is still a perfectly valid ordinal.
-    """
-    device = ScriptedDevice([
-        light_page([light_record(button_id=0)], total=2, start=0, fingerprint=1),
-        light_page([light_record(button_id=9)], total=2, start=1, fingerprint=2),
-        light_page([light_record(button_id=7)], total=2, start=0, fingerprint=3),
-        light_page([light_record(button_id=8)], total=2, start=1, fingerprint=3),
-    ])
-    records, fingerprint = device.read_lights()
-    assert [record['button_id'] for record in records] == [7, 8]
-    assert fingerprint == 3
-
-
-def test_read_lights_gives_up_if_the_table_never_settles():
-    """Test that an endlessly changing table is reported rather than retried forever."""
-    device = ScriptedDevice([
-        light_page([light_record()], total=2, start=0, fingerprint=1),
-        light_page([light_record()], total=2, start=1, fingerprint=2),
-    ])
-    with pytest.raises(hlp.HostLightingError, match='kept changing'):
-        device.read_lights(retries=0)
-
-
-def test_page_6_decodes_a_record_field_by_field():
-    """Test the record layout, the signed action, the no-button-ID sentinel, and that only bit 0 is lit."""
-    page = hlp.decode_controls(control_page(
-        [control_record(gpio_pin=14, gpio_action=32, button_id=hlp.BUTTON_NONE, flags=0),
-         control_record(gpio_pin=22, gpio_action=-2, button_id=hlp.BUTTON_NONE, flags=0),
-         control_record(gpio_pin=27, gpio_action=1, button_id=0),
-         control_record(gpio_pin=16, gpio_action=13, button_id=12, flags=0x02)],
-        total=21, start=8, lit=16, unlit=5, fingerprint=0x15C2496E))
-    assert page['records'][0] == {'ordinal': 8, 'gpio_pin': 14, 'gpio_action': 32,
-                                  'button_id': hlp.BUTTON_NONE, 'lit': False}
-    assert page['records'][1]['gpio_action'] == -2
-    assert page['records'][2] == {'ordinal': 10, 'gpio_pin': 27, 'gpio_action': 1,
-                                  'button_id': 0, 'lit': True}
-    assert page['records'][3]['lit'] is False       # a flag bit the protocol has not defined yet
-    assert (page['total'], page['start'], page['lit'], page['unlit']) == (21, 8, 16, 5)
-    assert page['fingerprint'] == 0x15C2496E
-
-
-def test_page_6_takes_its_stride_from_the_wire():
-    """Test that a wider page 6 record than this decoder knows does not misalign it."""
-    records = [control_record(gpio_pin=2, button_id=0, width=8),
-               control_record(gpio_pin=3, button_id=1, width=8)]
-    page = hlp.decode_controls(control_page(records, stride=8))
-    assert page['stride'] == 8
-    assert [record['gpio_pin'] for record in page['records']] == [2, 3]
-    assert [record['button_id'] for record in page['records']] == [0, 1]
-
-
-def test_a_page_6_reply_short_of_its_fingerprint_is_refused():
-    """Test that a reply long enough for its records but not its tail is not read as fingerprint 0."""
-    with pytest.raises(hlp.HostLightingError, match='page 6'):
-        hlp.decode_controls(control_page([], fingerprint=7)[:40])
-
-
-def test_a_page_6_stride_narrower_than_the_record_is_refused():
-    """Test that a page 6 stride below six bytes is an error rather than a short read."""
-    with pytest.raises(hlp.HostLightingError, match='stride'):
-        hlp.decode_controls(control_page([control_record()], stride=5))
-
-
-def test_read_controls_walks_the_reference_board_in_three_reads():
-    """Test that 21 records come back whole over reads of 8, 8 and 5."""
-    device = ScriptedDevice(m_ultra_control_pages())
-    records, fingerprint = device.read_controls()
-    assert [(record['gpio_pin'], record['gpio_action'], record['button_id'])
-            for record in records] == M_ULTRA_CONTROLS
-    assert fingerprint == 0x15C2496E
-    assert [payload for _, payload in device.requests] == [bytes([6, 0]), bytes([6, 8]),
-                                                           bytes([6, 16])]
-
-
-def test_read_controls_refuses_a_walk_that_stops_short():
-    """Test that a control table that stops mid-walk is an error, not a truncated table."""
-    device = ScriptedDevice([m_ultra_control_pages()[0],
-                             control_page([], total=21, start=8, fingerprint=0x15C2496E)])
-    with pytest.raises(hlp.HostLightingError, match='control table stalled at 8 of 21'):
-        device.read_controls()
-
-
-def test_read_controls_discards_a_walk_the_table_moved_under():
-    """Test that a control table changing mid-walk restarts the walk."""
-    stale, fresh = m_ultra_control_pages(fingerprint=1), m_ultra_control_pages(fingerprint=2)
-    device = ScriptedDevice([stale[0], fresh[1]] + fresh)
-    records, fingerprint = device.read_controls()
-    assert len(records) == 21
-    assert fingerprint == 2
-    assert [payload[1] for _, payload in device.requests] == [0, 8, 0, 8, 16]
-
-
-def test_read_controls_gives_up_if_the_table_never_settles():
-    """Test that an endlessly changing control table is reported rather than retried forever."""
-    device = ScriptedDevice([m_ultra_control_pages(fingerprint=1)[0],
-                             m_ultra_control_pages(fingerprint=2)[1]])
-    with pytest.raises(hlp.HostLightingError, match='control table kept changing'):
-        device.read_controls(retries=0)
-
-
-def probe_inputs(lit_pins=(2, 3), light_pins=(2, 3), header=None):
-    """Build page 6 and page 5 records as the probe's cross-check receives them."""
-    controls = [{'gpio_pin': pin, 'lit': pin in lit_pins} for pin in (2, 3, 14)]
-    lights = [{'gpio_pin': pin, 'kind': 0} for pin in light_pins]
-    lights.append({'gpio_pin': None, 'kind': 1})      # a case light has no pin
-    lit = sum(1 for record in controls if record['lit'])
-    header = header or {'total': 3, 'lit': lit, 'unlit': 3 - lit}
-    return header, controls, lights
-
-
-def test_the_probe_finds_a_coherent_control_table_coherent():
-    """Test that counts which add up and lit pins matching page 5 both pass."""
-    assert [held for _, held in check_control_table(*probe_inputs())] == [True, True]
-
-
-def test_the_probe_catches_counts_that_disagree_with_the_records():
-    """Test that a header claiming a different lit count than the records is a mismatch."""
-    header, controls, lights = probe_inputs(header={'total': 3, 'lit': 3, 'unlit': 0})
-    assert [held for _, held in check_control_table(header, controls, lights)] == [False, True]
-
-
-def test_the_probe_catches_counts_that_do_not_add_up():
-    """Test that lit plus unlit falling short of the total is a mismatch."""
-    header, controls, lights = probe_inputs(header={'total': 3, 'lit': 2, 'unlit': 0})
-    assert check_control_table(header, controls, lights)[0][1] is False
-
-
-def test_the_probe_catches_a_total_the_walk_did_not_return():
-    """Test that a header total other than the number of records read is a mismatch."""
-    header, controls, lights = probe_inputs(header={'total': 4, 'lit': 2, 'unlit': 2})
-    assert check_control_table(header, controls, lights)[0][1] is False
-
-
-def test_the_probe_joins_only_button_lights():
-    """Test that a light of another kind naming a pin does not make that pin lit.
-
-    Page 6 marks a pin lit only for a button light, so the join has to match.
-    """
-    header, controls, lights = probe_inputs()
-    lights.append({'gpio_pin': 14, 'kind': 1})
-    assert check_control_table(header, controls, lights)[1][1] is True
-
-
-def test_the_probe_catches_a_lit_pin_page_5_has_no_light_on():
-    """Test that the join on pin fails when page 6 and page 5 disagree."""
-    checks = check_control_table(*probe_inputs(lit_pins=(2, 3, 14)))
-    assert checks[1][1] is False
-    assert '[2, 3, 14]' in checks[1][0]
-
-
-def test_the_probe_skips_the_join_while_page_5_is_empty():
-    """Test that an empty light table claims nothing about which pins are lit."""
-    header, controls, _ = probe_inputs()
-    assert len(check_control_table(header, controls, [])) == 1
-
-
-def probe_board():
-    """Describe a v1.4 board to run the whole probe against.
-
-    The fake's lights carry no pins, so its light table is left unpublished and
-    the probe's page 5 join stays out of the way of the count check.
-    """
-    return FakeBoard(version=(1, 4), controls=M_ULTRA_CONTROLS, light_table_feature=False)
-
-
-def test_the_probe_exits_non_zero_when_page_6_disagrees_with_itself(monkeypatch, capsys):
-    """Test that a coherent board passes the probe and a header lying about its counts fails it."""
-    board = probe_board()
-    attach(monkeypatch, board)
-    assert probe_main(['']) == 0
-    assert 'MISMATCH' not in capsys.readouterr().out
-
-    honest = board._controls_page
-
-    def lying(start):
-        reply = honest(start)
-        reply[7] += 1       # one more lit than the records show
-        return reply
-
-    board._controls_page = lying
-    assert probe_main(['']) == 1
-    assert 'MISMATCH' in capsys.readouterr().out
-
-
-def test_the_probe_skips_its_checks_when_page_6_moved_under_it(monkeypatch, capsys):
-    """Test that a table that changed between the walk and the header re-read is not judged."""
-    board = probe_board()
-    honest = board._controls_page
-    reads = []
-
-    def moving(start):
-        reads.append(start)
-        if len(reads) == 4:
-            board.fingerprint += 1      # a profile switch after the three-read walk, before the re-read
-        return honest(start)
-
-    board._controls_page = moving
-    attach(monkeypatch, board)
-    assert probe_main(['']) == 0
-    out = capsys.readouterr().out
-    assert 'checks skipped' in out
-    assert 'check:' not in out
-
-
-def test_set_lights_chunks_at_the_report_capacity():
-    """Test that more entries than one report holds are sent as further reports."""
-    device = ScriptedDevice([stage_reply(applied=15), stage_reply(applied=3)])
-    entries = [(ordinal, 255, 0, 0) for ordinal in range(18)]
-    applied, skipped, stale = device.set_lights(entries)
-    assert applied == 18
-    assert skipped == 0
-    assert [payload[0] for _, payload in device.requests] == [hlp.SET_LIGHT_MAX, 3]
-
-
-def test_the_outcome_mask_is_left_alone_unless_the_caller_asks():
-    """Test that the v1.3 mask is not read by default.
-
-    Boards before v1.3 zero-fill those bytes, so reading them ungated reports
-    every entry as skipped - including the ones that visibly lit.
-    """
-    device = ScriptedDevice([stage_reply(applied=2, mask=0)])
-    _, _, stale = device.set_lights([(0, 1, 2, 3), (1, 4, 5, 6)])
-    assert stale is None
-
-
-def test_the_outcome_mask_names_the_ordinals_the_board_skipped():
-    """Test that a cleared mask bit is reported as its ordinal, not its bit index."""
-    device = ScriptedDevice([stage_reply(applied=2, skipped=1, mask=0b101)])
-    _, skipped, stale = device.set_lights([(7, 0, 0, 0), (8, 0, 0, 0), (9, 0, 0, 0)],
-                                          outcomes=True)
-    assert skipped == 1
-    assert stale == [8]
-
-
-def test_skipped_ordinals_are_named_across_report_boundaries():
-    """Test that the second report's mask maps onto the second report's entries."""
-    device = ScriptedDevice([stage_reply(applied=15, mask=0x7FFF),
-                             stage_reply(applied=2, skipped=1, mask=0b110)])
-    entries = [(ordinal, 0, 0, 0) for ordinal in range(100, 118)]
-    _, _, stale = device.set_lights(entries, outcomes=True)
-    assert stale == [115]
-
-
-def test_set_lights_rgbw_sends_five_byte_entries():
-    """Test that the white component reaches the wire on the RGBW variant."""
-    device = ScriptedDevice([stage_reply(command=hlp.CMD_SET_LIGHT_RGBW, applied=1)])
-    device.set_lights_rgbw([(3, 10, 20, 30, 40)])
-    command, payload = device.requests[0]
-    assert command == hlp.CMD_SET_LIGHT_RGBW
-    assert payload[:6] == bytes([1, 3, 10, 20, 30, 40])
-
-
-def test_an_entry_of_the_wrong_width_is_refused_before_anything_is_sent():
-    """Test that a mis-shaped entry raises instead of staging garbage.
-
-    The count byte tells the firmware how many fixed-width entries follow, so a
-    short entry shifts every entry after it. Staging is not acknowledged
-    per-entry, so nothing on the wire would report it.
-    """
-    device = ScriptedDevice([])
-    with pytest.raises(ValueError, match='entries'):
-        device.set_lights([(3, 10, 20, 30, 40)])
-    with pytest.raises(ValueError, match='entries'):
-        device.set_lights_rgbw([(3, 10, 20, 30)])
-    assert device.requests == []
-
-
-def test_only_the_paged_pages_carry_a_start_entry():
-    """Test that the paged request form is used for pages 4, 5 and 6 alone.
-
-    Sending the wider payload to an unpaged page risks an INVALID_ARG from
-    firmware that reads the extra byte, for no gain.
-    """
-    device = ScriptedDevice([caps_reply(), caps_reply(), caps_reply()])
-    device.get_caps_page(hlp.CAPS_PAGE_STATE)
-    device.get_caps_page(hlp.CAPS_PAGE_LIGHTS, 8)
-    device.get_caps_page(hlp.CAPS_PAGE_CONTROLS, 16)
-    assert device.requests == [(hlp.CMD_GET_CAPS, bytes([hlp.CAPS_PAGE_STATE])),
-                               (hlp.CMD_GET_CAPS, bytes([hlp.CAPS_PAGE_LIGHTS, 8])),
-                               (hlp.CMD_GET_CAPS, bytes([hlp.CAPS_PAGE_CONTROLS, 16]))]
-
-
-@pytest.mark.parametrize('colour, expected', [
-    ((255, 255, 255), (0, 0, 0, 255)),        # white rides the emitter, not the three
-    ((255, 255, 255, 0), (0, 0, 0, 255)),     # an explicit zero changes nothing
-    ((255, 255, 255, 255), (0, 0, 0, 255)),   # and an explicit full white clamps
-    ((255, 0, 0), (255, 0, 0, 0)),            # nothing achromatic to move
-    ((255, 0, 0, 255), (255, 0, 0, 255)),     # red plus white, both honoured
-    ((255, 0, 0, 128), (255, 0, 0, 128)),     # and at half
-    ((120, 200, 90), (30, 110, 0, 90)),       # the general case
+    reply = report('82 01 00', '0a 00 00 02 00', '02 07 11 00',
+                   '02 01 00 02', 'aa bb cc', '03 02 00 02', 'dd ee ff', token=TOKEN)
+    records = hlp.decode_records(reply)
+    assert [(record['key'], record['action']) for record in records] == [(2, 1), (3, 2)]
+
+
+def test_a_stride_too_narrow_for_its_groups_is_refused():
+    """Test that a record narrower than the groups it claims is refused."""
+    reply = report('82 01 00', '0a 00 00 02 00', '02 03 01 00', token=TOKEN)
+    with pytest.raises(hlp.HostLightingError, match='stride is 3'):
+        hlp.decode_records(reply)
+
+
+def test_more_records_than_a_reply_holds_is_refused():
+    """Test that a count running past the 48-byte record area is refused."""
+    reply = report('82 01 00', '0a 00 00 30 00', '0d 04 01 00', token=TOKEN)
+    with pytest.raises(hlp.HostLightingError, match='more than a reply holds'):
+        hlp.decode_records(reply)
+
+
+def test_a_stale_token_reply_has_no_records_and_the_current_token():
+    """Test the status 3 reply: page and start echoed, nothing else but the token."""
+    header = hlp.decode_page_header(STALE)
+    assert header['status'] == hlp.STATUS_STALE
+    assert (header['page'], header['start'], header['count'], header['groups']) == (9, 0, 0, 0)
+    assert header['token'] == 0x1234ABCD
+
+
+def test_state_changed_carries_page_one_and_the_token():
+    """Test the event against the reference's worked example."""
+    state, token = hlp.decode_state_changed(STATE_CHANGED)
+    assert token == 0x1234ABCD
+    assert state['takeover_live'] is False
+    assert (state['profile'], state['player'], state['takeover_number']) == (1, 2, 1)
+    assert (state['holder_token'], state['holder_name']) == (0xB2, 'Beta')
+    assert (state['claim_exclusive'], state['claim_generation']) == (False, 3)
+    assert (state['overlay'], state['keepalive_ms'], state['brightness_applied']) == (False, 2000, True)
+
+
+def test_another_event_is_not_taken_for_state_changed():
+    """Test that an event number this client does not know is refused, not decoded."""
+    other = bytearray(STATE_CHANGED)
+    other[1] = 1
+    with pytest.raises(hlp.HostLightingError, match='not STATE_CHANGED'):
+        hlp.decode_state_changed(bytes(other))
+
+
+def test_the_claim_reply_shows_the_holder_and_generation():
+    """Test the Controller group as the CLAIM reply carries it at [8..29]."""
+    holder = hlp.decode_controller(CLAIM_REPLY[8:30])
+    assert holder == {'holder_token': 0xA1, 'holder_name': 'Alpha', 'claim_exclusive': True,
+                      'claim_generation': 2}
+
+
+def test_a_status_4_reply_names_the_holder():
+    """Test that a refusal carries the holder at [3..24] into the error."""
+    error = hlp.HostLightingDevice.rejected(hlp.CMD_STAGE, REFUSED)
+    assert error.status == hlp.STATUS_CLAIMED
+    assert error.holder['holder_token'] == 0xB2 and error.holder['claim_generation'] == 3
+    assert "CLAIMED by 'Beta'" in str(error)
+
+
+def test_a_status_2_reply_names_the_invalid_byte():
+    """Test that an invalid argument carries the request offset at [3] into the error."""
+    error = hlp.HostLightingDevice.rejected(hlp.CMD_STAGE, report('90 01 02', '06'))
+    assert (error.status, error.offset, error.holder) == (hlp.STATUS_INVALID, 6, None)
+    assert 'INVALID_ARG at request byte 6' in str(error)
+
+
+def test_identity_strings_follow_each_other_in_bit_order():
+    """Test page 0: the label and the firmware version, the groups asked for and echoed."""
+    strings = b'Haute42 COSMOX\x00v0.7.12-154-gc3499c2\x00'
+    reply = report('82 01 00', '00 00 00 01 00', f"01 {len(strings):02x} 09 00", strings.hex(),
+                   token=TOKEN)
+    assert hlp.decode_identity(reply) == {0: 'Haute42 COSMOX', 3: 'v0.7.12-154-gc3499c2'}
+
+
+def test_a_full_width_identity_string_has_no_terminator():
+    """Test that a 48-byte string fills its group, and is decoded leniently if cut mid-character."""
+    text = ('x' * 47).encode() + b'\xc3'
+    reply = report('82 01 00', '00 00 00 01 00', '01 30 01 00', text.hex(), token=TOKEN)
+    assert hlp.decode_identity(reply) == {0: 'x' * 47 + '\ufffd'}
+
+
+@pytest.mark.parametrize('addressing, rgb, rgbw', [
+    (hlp.ADDRESSING_LED_RUN, 19, 14),
+    (hlp.ADDRESSING_LIGHT, 11, 9),
+    (hlp.ADDRESSING_ACTION, 11, 9),
+    (hlp.ADDRESSING_KIND, 14, 11),
 ])
-def test_white_takes_the_achromatic_part_of_a_colour(colour, expected):
-    """Test the subtractive conversion a board expects a host to have applied.
+def test_capacity_per_report_matches_the_reference(addressing, rgb, rgbw):
+    """Test the per-report capacities against the protocol reference's table."""
+    assert hlp.stage_capacity(addressing, hlp.PIXEL_RGB) == rgb
+    assert hlp.stage_capacity(addressing, hlp.PIXEL_RGBW) == rgbw
 
-    A white emitter exists to make white better than three colour emitters can,
-    so the achromatic part of a colour belongs on it. Anything the profile asked
-    for on top is added and clamped.
-    """
-    assert hlp.subtractive_white(colour) == expected
+
+def test_stage_by_action_matches_the_worked_example():
+    """Test the bytes of B1 red and E1 blue, staged by action."""
+    payloads = hlp.entry_payloads(hlp.ADDRESSING_ACTION, [(5, (255, 0, 0)), (43, (0, 0, 255))])
+    assert payloads == [bytes.fromhex('06 02 05 00 ff 00 00 2b 00 00 00 ff')]
+
+
+def test_an_led_run_matches_the_worked_example():
+    """Test the bytes of LED 0 red as a run of one, as the refused frame sends it."""
+    assert hlp.run_payloads(0, 1, (255, 0, 0)) == [bytes.fromhex('00 00 00 01 ff 00 00')]
+
+
+def test_a_kind_is_one_byte_and_a_light_ordinal_two():
+    """Test the address widths: kind 8-bit, light ordinal 16-bit, both with RGBW pixels."""
+    assert hlp.entry_payloads(hlp.ADDRESSING_KIND, [(1, (1, 2, 3, 4))], hlp.PIXEL_RGBW) == [
+        bytes.fromhex('17 01 01 01 02 03 04')]
+    assert hlp.entry_payloads(hlp.ADDRESSING_LIGHT, [(300, (1, 2, 3, 4))], hlp.PIXEL_RGBW) == [
+        bytes.fromhex('14 01 2c 01 01 02 03 04')]
+
+
+def test_entries_past_one_report_are_split_at_the_capacity():
+    """Test that twelve RGB entries by action go as eleven and one, in order."""
+    entries = [(action, (action, 0, 0)) for action in range(1, 13)]
+    first, second = hlp.entry_payloads(hlp.ADDRESSING_ACTION, entries)
+    assert (first[1], second[1]) == (11, 1)
+    assert second[2:] == bytes.fromhex('0c 00 0c 00 00')
+    assert len(first) <= 61
+
+
+def test_a_long_run_is_split_and_each_part_starts_where_the_last_ended():
+    """Test that a 30-LED run goes as 19 and 11, and as 14, 14 and 2 with white."""
+    rgb = hlp.run_payloads(16, 30, (1, 2, 3))
+    assert [(payload[1] | payload[2] << 8, payload[3]) for payload in rgb] == [(16, 19), (35, 11)]
+    rgbw = hlp.run_payloads(16, 30, (1, 2, 3, 4), hlp.PIXEL_RGBW)
+    assert [(payload[1], payload[3]) for payload in rgbw] == [(16, 14), (30, 14), (44, 2)]
+    assert rgbw[0][0] == 0x10 and rgbw[2][4:] == bytes([1, 2, 3, 4]) * 2
+
+
+def test_an_led_index_above_255_travels_as_sixteen_bits():
+    """Test that a run's first LED is little-endian 16-bit."""
+    assert hlp.run_payloads(300, 1, (9, 9, 9))[0][:4] == bytes.fromhex('00 2c 01 01')
+
+
+def test_a_pixel_of_the_wrong_width_is_refused_before_it_shifts_the_rest():
+    """Test that a colour not matching its format raises."""
+    with pytest.raises(ValueError, match='3-byte'):
+        hlp.entry_payloads(hlp.ADDRESSING_ACTION, [(5, (1, 2, 3, 4))])
+    with pytest.raises(ValueError, match='4-byte'):
+        hlp.run_payloads(0, 2, (1, 2, 3), hlp.PIXEL_RGBW)
+
+
+def test_every_profile_name_maps_to_its_action_or_kind():
+    """Test the control names against GP2040-CE's GpioAction and LightType values."""
+    targets = hlp.CONTROL_TARGETS
+    assert [targets[name][1] for name in ('UP', 'DOWN', 'LEFT', 'RIGHT')] == [1, 2, 3, 4]
+    assert [targets[name][1] for name in ('B1', 'B4', 'L1', 'R1', 'L2', 'R2')] == [5, 8, 9, 10, 11, 12]
+    assert [targets[name][1] for name in ('S1', 'S2', 'A1', 'A2', 'L3', 'R3')] == [13, 14, 15, 16, 17, 18]
+    assert [targets[name][1] for name in ('A3', 'A4', 'E1', 'E12')] == [41, 42, 43, 54]
+    assert all(targets[name][0] == hlp.ADDRESSING_ACTION for name in ('UP', 'R3', 'A3', 'E12'))
+    assert [targets[name] for name in ('CASE', 'TURBO', 'PLED1', 'PLED4')] == [
+        (hlp.ADDRESSING_KIND, 1), (hlp.ADDRESSING_KIND, 2), (hlp.ADDRESSING_KIND, 3),
+        (hlp.ADDRESSING_KIND, 6)]
+    assert len(targets) == 38
+
+
+def test_a_control_is_named_back_as_the_profile_wrote_it():
+    """Test the reverse mapping, and a value with no name."""
+    assert hlp.control_name(hlp.CONTROL_TARGETS['L3']) == 'L3'
+    assert hlp.control_name(hlp.CONTROL_TARGETS['CASE']) == 'CASE'
+    assert hlp.control_name((hlp.ADDRESSING_ACTION, 32)) == 'action 32'
+    assert hlp.control_name((hlp.ADDRESSING_KIND, 9)) == 'kind 9'
+
+
+@pytest.mark.parametrize('colour, wire', [
+    ((255, 255, 255), (0, 0, 0, 255)),
+    ((255, 128, 0), (255, 128, 0, 0)),
+    ((200, 100, 100), (100, 0, 0, 100)),
+    ((255, 0, 0, 128), (255, 0, 0, 128)),
+    ((255, 255, 255, 255), (0, 0, 0, 255)),
+    ((10, 10, 10, 20), (0, 0, 0, 30)),
+])
+def test_white_is_moved_onto_the_white_emitter(colour, wire):
+    """Test the subtractive conversion, with an explicit white added and clamped."""
+    assert hlp.subtractive_white(colour) == wire
+
+
+@pytest.mark.parametrize('colour_format, white', [(0, False), (1, False), (2, True), (3, True)])
+def test_only_the_w_formats_have_a_white_channel(colour_format, white):
+    """Test that GRBW and RGBW are the chains with a white emitter."""
+    assert hlp.has_white_channel(colour_format) is white

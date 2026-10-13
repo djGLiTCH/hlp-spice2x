@@ -19,18 +19,18 @@ def write(tmp_path, lights):
 
 
 def test_button_entry_resolves_to_a_target(tmp_path):
-    """Test that a control name becomes a protocol button ID."""
+    """Test that a control name becomes the action STAGE reaches it by (addressing 6)."""
     path = write(tmp_path, {'P1 Button 1': {'button': 'B1', 'colour': 'FF0000'}})
     profile, _ = profile_module.load(path)
-    assert profile['P1 Button 1'] == (('button', 4), (0xFF, 0, 0))
+    assert profile['P1 Button 1'] == (('button', (6, 5)), (0xFF, 0, 0))
 
 
 def test_special_controls_resolve(tmp_path):
-    """Test that the case strip and player LEDs resolve to their special IDs."""
+    """Test that the case strip and player LEDs resolve to their kinds (addressing 7)."""
     path = write(tmp_path, {'Case': {'button': 'CASE'}, 'P1': {'button': 'PLED1'}})
     profile, _ = profile_module.load(path)
-    assert profile['Case'][0] == ('button', 29)
-    assert profile['P1'][0] == ('button', 24)
+    assert profile['Case'][0] == ('button', (7, 1))
+    assert profile['P1'][0] == ('button', (7, 3))
 
 
 def test_range_entry_resolves(tmp_path):
@@ -48,7 +48,7 @@ def test_american_spelling_accepted(tmp_path):
 
 
 def test_empty_button_is_skipped(tmp_path):
-    """Test that an unfilled skeleton line is ignored rather than failing."""
+    """Test that an unfilled skeleton line is ignored."""
     path = write(tmp_path, {'A': {'button': 'B1'}, 'B': {'button': '', 'colour': 'FFFFFF'}})
     profile, warnings = profile_module.load(path)
     assert set(profile) == {'A'}
@@ -56,7 +56,7 @@ def test_empty_button_is_skipped(tmp_path):
 
 
 def test_missing_keys_warn(tmp_path):
-    """Test that an entry with neither key warns rather than silently vanishing."""
+    """Test that an entry with neither key warns."""
     path = write(tmp_path, {'A': {'button': 'B1'}, 'Typo': {'buton': 'B2'}})
     profile, warnings = profile_module.load(path)
     assert set(profile) == {'A'}
@@ -70,9 +70,14 @@ def test_unknown_control_is_rejected(tmp_path):
         profile_module.load(path)
 
 
-def test_range_past_the_buffer_is_rejected(tmp_path):
-    """Test that a range running past the firmware's LED buffer fails at load."""
-    path = write(tmp_path, {'A': {'range': [95, 20]}})
+def test_range_past_the_wire_is_rejected(tmp_path):
+    """Test that a range past the 16-bit LED index fails at load.
+
+    How many LEDs a board addresses is its own to say, so that bound is applied
+    at the handshake and not here.
+    """
+    assert profile_module.load(write(tmp_path, {'A': {'range': [95, 20]}}))[0]
+    path = write(tmp_path, {'A': {'range': [65530, 20]}})
     with pytest.raises(profile_module.ProfileError, match='outside'):
         profile_module.load(path)
 
@@ -104,7 +109,7 @@ def test_state_scales_the_colour(tmp_path):
     path = write(tmp_path, {'A': {'button': 'B1', 'colour': 'FF0000'}})
     profile, _ = profile_module.load(path)
     frame = profile_module.resolve_frame({'A': 0.5}, profile)
-    assert frame[('button', 4)] == (127, 0, 0)
+    assert frame[('button', (6, 5))] == (127, 0, 0)
 
 
 def test_two_lights_on_one_control_add(tmp_path):
@@ -113,7 +118,7 @@ def test_two_lights_on_one_control_add(tmp_path):
                             'B': {'button': 'B1', 'colour': '0000FF'}})
     profile, _ = profile_module.load(path)
     frame = profile_module.resolve_frame({'A': 1.0, 'B': 0.5}, profile)
-    assert frame[('button', 4)] == (0xFF, 0, 127)
+    assert frame[('button', (6, 5))] == (0xFF, 0, 127)
 
 
 def test_lights_absent_from_the_profile_are_ignored(tmp_path):
@@ -121,7 +126,7 @@ def test_lights_absent_from_the_profile_are_ignored(tmp_path):
     path = write(tmp_path, {'A': {'button': 'B1'}})
     profile, _ = profile_module.load(path)
     frame = profile_module.resolve_frame({'A': 1.0, 'Unmapped': 1.0}, profile)
-    assert list(frame) == [('button', 4)]
+    assert list(frame) == [('button', (6, 5))]
 
 
 def test_off_lights_stage_black(tmp_path):
@@ -129,11 +134,11 @@ def test_off_lights_stage_black(tmp_path):
     path = write(tmp_path, {'A': {'button': 'B1', 'colour': 'FF0000'}})
     profile, _ = profile_module.load(path)
     frame = profile_module.resolve_frame({'A': 0.0}, profile)
-    assert frame[('button', 4)] == (0, 0, 0)
+    assert frame[('button', (6, 5))] == (0, 0, 0)
 
 
 def test_format_frame_names_controls(tmp_path):
-    """Test that dry-run output names controls rather than numbering them."""
+    """Test that dry-run output names controls."""
     path = write(tmp_path, {'A': {'button': 'S2', 'colour': 'FFAA00'},
                             'B': {'range': [16, 4], 'colour': '112233'}})
     profile, _ = profile_module.load(path)
@@ -173,31 +178,31 @@ def test_empty_frame_is_described(tmp_path):
 def test_an_index_picks_one_light_of_a_control(tmp_path):
     """Test that an indexed entry resolves to an unresolved per-light target.
 
-    Which ordinal it names is a question only a board can answer, so load keeps
+    Which light it names is a question only a board can answer, so load keeps
     the control and the index and leaves the resolving to the handshake.
     """
     path = write(tmp_path, {'Second Up': {'button': 'UP', 'index': 1, 'colour': 'FF0000'}})
     profile, _ = profile_module.load(path)
-    assert profile['Second Up'] == (('light', 0, 1), (0xFF, 0, 0))
+    assert profile['Second Up'] == (('light', (6, 1), 1), (0xFF, 0, 0))
 
 
 def test_index_zero_is_a_light_and_not_an_absent_key(tmp_path):
     """Test that the first light of a control is not mistaken for no index at all.
 
-    Index 0 is both valid and falsy, so testing the value rather than its
-    presence would quietly turn it back into a bare control name.
+    Index 0 is both valid and falsy, so a test of the value would turn it back
+    into a bare control name.
     """
     path = write(tmp_path, {'First Up': {'button': 'UP', 'index': 0}})
     profile, _ = profile_module.load(path)
-    assert profile['First Up'][0] == ('light', 0, 0)
+    assert profile['First Up'][0] == ('light', (6, 1), 0)
 
 
 @pytest.mark.parametrize('entry', [{'index': 1}, {'button': '', 'index': 1}])
 def test_an_index_with_nothing_to_index_into_is_an_error(tmp_path, entry):
-    """Test that an index without a control is reported rather than skipped.
+    """Test that an index without a control is reported.
 
-    Both shapes would otherwise fall into a path that treats them as an unfilled
-    skeleton line, which is the wrong answer for an entry someone half filled in.
+    Both shapes are falsy as an unfilled skeleton line is, and must not be
+    skipped as one.
     """
     with pytest.raises(profile_module.ProfileError, match='needs a'):
         profile_module.load(write(tmp_path, {'A': entry}))
@@ -205,33 +210,33 @@ def test_an_index_with_nothing_to_index_into_is_an_error(tmp_path, entry):
 
 @pytest.mark.parametrize('index', [-1, 'first', None])
 def test_an_index_that_is_not_a_light_number_is_rejected(tmp_path, index):
-    """Test that a negative or non-numeric index fails at load rather than at connect."""
+    """Test that a negative or non-numeric index fails at load."""
     with pytest.raises(profile_module.ProfileError, match='index'):
         profile_module.load(write(tmp_path, {'A': {'button': 'UP', 'index': index}}))
 
 
 def test_the_extended_controls_are_accepted(tmp_path):
-    """Test that the names only a light table can report resolve to their IDs."""
+    """Test that A3, A4 and E1-E12 resolve to their actions."""
     path = write(tmp_path, {'a': {'button': 'A3'}, 'b': {'button': 'E1'},
                             'c': {'button': 'E12'}})
     profile, _ = profile_module.load(path)
-    assert profile['a'][0] == ('button', 18)
-    assert profile['b'][0] == ('button', 30)
-    assert profile['c'][0] == ('button', 41)
+    assert profile['a'][0] == ('button', (6, 41))
+    assert profile['b'][0] == ('button', (6, 43))
+    assert profile['c'][0] == ('button', (6, 54))
 
 
 def test_a_per_light_target_renders_symbolically_without_a_board():
     """Test that a dry run shows the entry as written, since it has no ordinal.
 
-    A dry run has no board and so no light table, which is the only thing that
+    A dry run has no board and so no Lights page, which is the only thing that
     could turn an index into an ordinal. Showing the control and the index is
     what the profile said, and it is checkable by eye.
     """
-    assert profile_module.format_frame({('light', 0, 1): (255, 0, 0)}) == 'Up[1]=#FF0000'
+    assert profile_module.format_frame({('light', (6, 1), 1): (255, 0, 0)}) == 'Up[1]=#FF0000'
 
 
 def test_an_eight_digit_colour_asks_for_the_white_channel(tmp_path):
-    """Test that RRGGBBWW parses as four components rather than being truncated."""
+    """Test that RRGGBBWW parses as four components."""
     path = write(tmp_path, {'A': {'button': 'B1', 'colour': 'FF000080'}})
     profile, _ = profile_module.load(path)
     assert profile['A'][1] == (0xFF, 0, 0, 0x80)
@@ -240,11 +245,10 @@ def test_an_eight_digit_colour_asks_for_the_white_channel(tmp_path):
 @pytest.mark.parametrize('colour', ['0xFF0000', 'FFAA', '  FF0000  ', 'FF_00_00',
                                     'FF00000', 'GGHHII', 12345])
 def test_a_colour_that_is_not_six_or_eight_hex_digits_is_refused(tmp_path, colour):
-    """Test that the length is checked rather than left to int(colour, 16).
+    """Test that the length of a colour is checked.
 
     int() accepts a 0x prefix, underscores, surrounding whitespace and any
-    number of digits, so 'FF0000FF' parsed as blue long before white existed.
-    Telling six digits from eight is only safe once the length means something.
+    number of digits, so it cannot tell six digits from eight.
     """
     with pytest.raises(profile_module.ProfileError, match='hex digits'):
         profile_module.load(write(tmp_path, {'A': {'button': 'B1', 'colour': colour}}))
@@ -253,27 +257,25 @@ def test_a_colour_that_is_not_six_or_eight_hex_digits_is_refused(tmp_path, colou
 def test_two_lights_on_one_target_combine_across_different_widths():
     """Test that only one entry asking for white does not truncate the other.
 
-    Zipping a three-component colour against a four-component one would drop the
-    white silently, which is the kind of thing nobody notices until a board with
-    a white chain is plugged in.
+    Zipping a three-component colour against a four-component one would drop
+    the white.
     """
-    profile = {'a': (('button', 4), (10, 20, 30)), 'b': (('button', 4), (1, 2, 3, 40))}
+    profile = {'a': (('button', (6, 5)), (10, 20, 30)), 'b': (('button', (6, 5)), (1, 2, 3, 40))}
     frame = profile_module.resolve_frame({'a': 1.0, 'b': 1.0}, profile)
-    assert frame[('button', 4)] == (11, 22, 33, 40)
+    assert frame[('button', (6, 5))] == (11, 22, 33, 40)
 
 
 def test_a_white_component_is_shown_in_a_dry_run():
-    """Test that dry-run output renders all four components rather than three."""
-    assert profile_module.format_frame({('button', 4): (255, 0, 0, 128)}) == 'B1=#FF000080'
+    """Test that dry-run output renders all four components."""
+    assert profile_module.format_frame({('button', (6, 5)): (255, 0, 0, 128)}) == 'B1=#FF000080'
 
 
 @pytest.mark.parametrize('empty', [[], 0, None, ''])
 def test_a_range_key_with_nothing_in_it_is_reported(tmp_path, empty):
-    """Test that a falsy range is refused rather than silently dropped.
+    """Test that a falsy range is refused.
 
-    Every one of these is falsy, so the branch that skips an unfilled skeleton
-    line swallowed them, while a merely malformed [16] was refused. The light
-    then went missing from the profile with nothing said about it.
+    Every one of these is falsy as an unfilled skeleton line is, and must not
+    be skipped as one.
     """
     with pytest.raises(profile_module.ProfileError, match=r'\[start, count\]'):
         profile_module.load(write(tmp_path, {'A': {'range': empty}}))
