@@ -6,6 +6,8 @@ SPDX-License-Identifier: GPL-3.0-or-later
 import argparse
 import sys
 
+from gp2040ce_hostlighting.protocol import HostLightingError, find_board, find_other_majors
+
 from . import bridge, hlp, profile as profile_module
 from .spiceapi import SpiceApiError, SpiceConnection
 
@@ -69,7 +71,7 @@ def main(argv=None) -> int:
         if not args.profile:
             parser.error("--profile is required (build one with --write-profile)")
         return run_bridge(args)
-    except (hlp.HostLightingError, profile_module.ProfileError, SpiceApiError) as error:
+    except (HostLightingError, profile_module.ProfileError, SpiceApiError) as error:
         print(error, file=sys.stderr)
         return 1
     except OSError as error:
@@ -93,7 +95,7 @@ def list_boards() -> int:
               f"{board['firmware']}")
     if len(boards) > 1:
         print("pick one with --board-id and the start of its ID")
-    note = hlp.other_majors_note(hlp.find_other_majors())
+    note = hlp.other_majors_note(find_other_majors())
     if note:
         print(note)
     return 0
@@ -138,7 +140,7 @@ def run_bridge(args) -> int:
     try:
         bridge.run(connection, profile, device=device, fps=args.fps, timeout_ms=args.timeout,
                    overlay=args.overlay, full_brightness=args.full_brightness,
-                   force=args.force, reopen=hlp.find_board)
+                   force=args.force, reopen=find_board)
     finally:
         # the run gives its claim on the lights up itself, which restores the animations
         if device is not None:

@@ -1,22 +1,23 @@
-"""Test the hardware checks against the fake board.
+"""Test the hardware checks against the model board.
 
-The hardware checks are run by eye against a real board. Run against the fake
-they are held to the same wire as the bridge, so a check that sends something
-the protocol refuses fails here first.
+The hardware checks are run by eye against a real board. Run against the model
+board they are held to the same wire as the bridge, so a check that sends
+something the protocol refuses fails here first.
 
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json
-import time
 
 import pytest
+from gp2040ce_hostlighting import protocol as hl
+from gp2040ce_hostlighting.testing import attach, control_record, summary_record
 
 from hlp_spice2x import hlp
 from hlp_spice2x import profile as profile_module
 
 from . import hardware_bridge, hardware_probe, hardware_lights
-from .fake_board import M_ULTRA_CONTROLS, M_ULTRA_LIGHTS, FakeBoard, attach
+from .boards import M_ULTRA_CONTROLS, M_ULTRA_LIGHTS, Board, on_clock
 
 T = hlp.CONTROL_TARGETS
 RED = (255, 0, 0)
@@ -24,24 +25,14 @@ RED = (255, 0, 0)
 
 def m_ultra(**kwargs):
     """Build the reference board."""
-    return FakeBoard(lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS,
-                     label='Haute42 COSMOX M Ultra', **kwargs)
+    return Board(lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS,
+                 label='Haute42 COSMOX M Ultra', **kwargs)
 
 
-class FastClock:
-    """A clock for the lights check that starts at the real time and jumps instead of sleeping."""
-
-    def __init__(self):
-        """Start at the real monotonic time, which the claim's renewals are paced by."""
-        self.now = time.monotonic()
-
-    def monotonic(self) -> float:
-        """Read the clock."""
-        return self.now
-
-    def sleep(self, seconds) -> None:
-        """Let time pass at once."""
-        self.now += seconds
+def lights_check_on_clock(monkeypatch, board):
+    """Run the lights check, the bridge and the library on the board's clock, so that a hold takes no real time."""
+    on_clock(monkeypatch, board)
+    monkeypatch.setattr(hardware_lights, 'time', hardware_lights.bridge.time)
 
 
 def test_the_probe_prints_a_board_and_finds_it_coherent(monkeypatch, capsys):
@@ -60,7 +51,7 @@ def test_the_probe_prints_a_board_and_finds_it_coherent(monkeypatch, capsys):
     assert 'GP14   action 32   action 32  unlit' in out
     assert 'GP27   action 1    Up         lit (duplicate)' in out
     assert out.count('coherent') == 3 and 'MISMATCH' not in out
-    assert {request[0] for request in board.requests} == {hlp.CMD_HELLO, hlp.CMD_GET_PAGE}
+    assert {request[0] for request in board.requests} == {hl.CMD_HELLO, hl.CMD_GET_PAGE}
     assert board.closed
 
 
@@ -68,13 +59,9 @@ def test_the_probe_exits_non_zero_when_the_tables_disagree(monkeypatch, capsys):
     """Test that a Summary count the records do not bear out fails the probe."""
     board = m_ultra()
     attach(monkeypatch, board)
-    real_page = board._page
-
-    def one_light_short(page):
-        records, widths = real_page(page)
-        return (records[:-1], widths) if page == hlp.PAGE_LIGHTS else (records, widths)
-
-    monkeypatch.setattr(board, '_page', one_light_short)
+    board.summary = [summary_record(led_extent=46, controls=21, lit_controls=16, unlit_controls=5,
+                                    lights=46)[0], board.summary[1]]
+    board.lights = board.lights[:-1]
     assert hardware_probe.main(['']) == 1
     assert 'check: 46 lights, 45 records: MISMATCH' in capsys.readouterr().out
 
@@ -83,7 +70,7 @@ def test_the_probe_with_no_board_says_where_to_get_firmware(monkeypatch, capsys)
     """Test that an empty enumeration fails and points at the firmware builds."""
     attach(monkeypatch)
     assert hardware_probe.main(['']) == 1
-    assert 'releases/tag/HLP_v2.0-rc7' in capsys.readouterr().out
+    assert 'releases/tag/HLP_v2.0-rc9' in capsys.readouterr().out
 
 
 def test_the_table_checks_hold_for_a_coherent_board():
@@ -96,7 +83,7 @@ def test_the_table_checks_hold_for_a_coherent_board():
 
 def test_the_probe_finds_a_board_with_a_light_on_a_hall_effect_trigger_coherent(monkeypatch, capsys):
     """Test that a light whose owner is a trigger key joins its control, and is named by that key."""
-    board = FakeBoard(lights=[('B1', 4), ('B2', 5)], controls=[(0x83, 5), (6, 6), (0xC1, 7)])
+    board = Board(lights=[('B1', 4), ('B2', 5)], controls=[(0x83, 5), (6, 6), (0xC1, 7)])
     attach(monkeypatch, board)
     assert hardware_probe.main(['']) == 0
     out = capsys.readouterr().out
@@ -108,9 +95,11 @@ def test_the_probe_finds_a_board_with_a_light_on_a_hall_effect_trigger_coherent(
 
 def test_a_lit_control_with_no_light_behind_it_is_a_mismatch():
     """Test that the join between lit controls and the Lights page's owner pins is checked."""
-    caps = hlp.negotiate(m_ultra().open())
-    controls = [dict(record, lit=True) if record['key'] == 16 else record for record in caps.controls]
-    checks = hardware_probe.check_tables(caps.summary, controls, caps.lights)
+    board = m_ultra()
+    # GP16 (S1) is marked lit, though no light is tied to it, and the Summary still counts 16 lit
+    board.controls = [control_record(16, 13) if control[0][0] == 16 else control for control in board.controls]
+    caps = hlp.negotiate(board.open())
+    checks = hardware_probe.check_tables(caps.summary, caps.controls, caps.lights)
     assert [held for _, held in checks] == [False, True, False]
     assert 'lit keys' in checks[2][0]
 
@@ -126,28 +115,28 @@ def test_the_lights_check_runs_every_phase_and_hands_the_lights_back(monkeypatch
     """Test the lights check end to end against the reference board, on a clock that does not wait."""
     board = m_ultra()
     attach(monkeypatch, board)
-    monkeypatch.setattr(hardware_lights, 'time', FastClock())
+    lights_check_on_clock(monkeypatch, board)
     assert hardware_lights.main(['']) == 0
     out = capsys.readouterr().out
     assert all(f"PHASE {number}:" in out for number in range(1, 12))
     assert 'SKIPPED' not in out and 'FAIL' not in out
     assert '0 protocol-level failure(s)' in out
     assert 'claim given up, on-board animations restored' in out
-    assert board.holder == 0 and board.closed
+    assert board.holder_token == 0 and board.closed
     # phase 7, third step: the control red, its second light explicitly black
     assert {3: RED, 12: (0, 0, 0)} in board.frames
     # phase 2 lit every light alone
     assert all({led: (255, 255, 255)} in board.frames for led in range(46))
     # phases 10 and 11 changed the takeover mode and the timeout
-    assert [request[3:6] for request in board.sent(hlp.CMD_CONFIGURE)] == [
+    assert [request[3:6] for request in board.sent(hl.CMD_CONFIGURE)] == [
         bytes.fromhex('00 10 27'), bytes.fromhex('01 10 27'), bytes.fromhex('00 d0 07')]
 
 
 def test_the_lights_check_skips_what_a_plain_board_cannot_show(monkeypatch, capsys):
     """Test that phases needing a multi-light control or a case strip say so and are skipped."""
-    board = FakeBoard()
+    board = Board()
     attach(monkeypatch, board)
-    monkeypatch.setattr(hardware_lights, 'time', FastClock())
+    lights_check_on_clock(monkeypatch, board)
     assert hardware_lights.main(['']) == 0
     out = capsys.readouterr().out
     assert out.count('SKIPPED') == 4
@@ -157,28 +146,28 @@ def test_the_lights_check_skips_what_a_plain_board_cannot_show(monkeypatch, caps
 def test_the_lights_check_stops_when_another_application_holds_the_lights(monkeypatch):
     """Test that the lights check takes nothing over, and leaves the other application's claim alone."""
     board = m_ultra()
-    board.take_over(name='MESH')
+    board.take_over(name=b'MESH')
     attach(monkeypatch, board)
-    with pytest.raises(hlp.HostLightingError, match="'MESH' holds this board's lights"):
+    with pytest.raises(hl.HostLightingError, match="'MESH' holds the lights"):
         hardware_lights.main([''])
-    assert board.holder != 0 and not board.sent(hlp.CMD_STAGE) and board.closed
+    assert board.holder_token != 0 and not board.sent(hl.CMD_STAGE) and board.closed
 
 
 def test_the_lights_check_reports_a_frame_the_board_refused(monkeypatch, capsys):
     """Test that losing the claim partway is a reported failure and a non-zero exit."""
     board = m_ultra()
     attach(monkeypatch, board)
-    monkeypatch.setattr(hardware_lights, 'time', FastClock())
+    lights_check_on_clock(monkeypatch, board)
 
     def lose_the_claim_at_the_tenth_frame(fake, request):
-        if request[0] == hlp.CMD_STAGE and len(fake.frames) == 10:
+        if request[0] == hl.CMD_STAGE and len(fake.frames) == 10:
             fake.hooks.clear()
             fake.take_over()
 
     board.hooks.append(lose_the_claim_at_the_tenth_frame)
-    with pytest.raises(hlp.HostLightingError, match='took the lights over'):
+    with pytest.raises(hl.HostLightingError, match='took the lights over'):
         hardware_lights.main([''])
-    assert "FAIL frame refused: the claim is held by 'Other'" in capsys.readouterr().out
+    assert "FAIL frame refused: command 0x10 (STAGE) rejected: CLAIMED by 'Other'" in capsys.readouterr().out
 
 
 def test_the_end_to_end_check_writes_a_profile_the_bridge_can_load(monkeypatch, tmp_path):

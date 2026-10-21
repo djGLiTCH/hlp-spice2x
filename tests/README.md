@@ -27,78 +27,67 @@ them, and importing one runs nothing.
 
 | File | What it covers |
 |---|---|
-| `test_hlp_decoders.py` | The framing, the `HELLO` and page decoders and the `STAGE` encoders, as pure functions over 64-byte reports built by hand. The fixtures are the protocol reference's worked examples. |
-| `test_capabilities.py` | What the bridge agrees to at connect: the major version, each capability it needs and each it can do without, the minor version gating nothing, and reading again only the pages whose change counter moved. |
+| `test_capabilities.py` | What the bridge agrees to at connect: the major version, each capability it needs and each it can do without, the minor version gating nothing, the Summary and its white channel flag, and reading again only the pages whose change counter moved. |
 | `test_staging.py` | How a frame reaches the board's lights: control names by action, the case strip by kind, one light by index, raw ranges, the white channel, the order the passes are emitted in, and which report is answered. Also the startup check that names controls the board lacks or cannot light. |
 | `test_loop_resilience.py` | The run loop against a board that changes, is shared, or stops answering: the claim and its renewal, another application taking the lights over and giving them up, a lapsed claim, a takeover that ended, a configuration change, an unacknowledged frame, and a board that leaves the bus and returns. |
-| `test_profile.py` | Profile parsing and frame resolution. |
+| `test_profile.py` | Profile parsing, the control names, and frame resolution. |
 | `test_cli.py` | Argument handling, `--list-boards`, and the paths that exit before connecting. |
 | `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection, NUL framing across repeated calls, and a game that closes the connection raising a ConnectionError, which the bridge treats as a normal ending. |
-| `test_device_errors.py` | The transport: telling a late reply from a device that has gone away, telling a reply from another application's, keeping an event that arrives ahead of a reply, the claim generation on every request, and finding the right board when several are attached. |
-| `test_hardware_checks.py` | The hardware checks below, run against the fake board: the probe and its table checks, the whole lights check on a clock that does not wait, and the profile the end-to-end check writes. |
+| `test_device_errors.py` | Finding a board: the bridge's messages when no board, or more than one, can be chosen, the listing of the boards, and a frame or a run when the board goes away. |
+| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe and its table checks, the whole lights check on the board's clock, and the profile the end-to-end check writes. |
 
-## The fake board
+The protocol's transport, decoders, claim and `Session` are
+gp2040ce-hostlighting's, tested in its own suite.
 
-`fake_board.py` is a fake board parameterised by what the board offers. It
-sits where hidapi sits, so requests travel through the real transport, with
-the same framing, sequence handling and reply matching that runs against real
-hardware.
+## The model board
 
-Hardware and firmware are described separately. `lights` and `controls`
-describe what the board has wired, and the capability sets are what its
-firmware lists in `HELLO`:
+The tests run on gp2040ce-hostlighting's `ModelBoard`, which answers as the
+firmware does and follows the protocol's timing, claim, events and change
+counters on a clock the test controls. It sits where hidapi sits, so requests
+travel through the library's real transport.
+
+`boards.py` wires one from a description in the bridge's own terms. Each
+light is named by the control or kind of light it belongs to, with its first
+LED, and each control by its key and action. What its firmware lists in
+`HELLO` is set by ModelBoard's attributes:
 
 ```python
-from tests.fake_board import ALL_EVENTS, FakeBoard, M_ULTRA_CONTROLS, M_ULTRA_LIGHTS
+from gp2040ce_hostlighting import protocol as hl
+from tests.boards import M_ULTRA_CONTROLS, M_ULTRA_LIGHTS, Board
 
-board = FakeBoard(lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS, events=ALL_EVENTS - {0})
-device = board.open()          # a real HostLightingDevice driving the fake
+board = Board(lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS, events=set())
+device = board.open()          # a HostLightingDevice driving the model board
 ```
 
-It answers by those sets as firmware does. A command it does not list is
-status 1, and a page or addressing mode it does not list is an invalid
-argument.
-
-It keeps the state the protocol gives a board:
-
-- the staged frame and every frame published (`board.frames`)
-- the takeover
-- the claim's holder and generation
-- the `CONFIGURE` settings and the subscription
-- a state token with a change counter for each configuration page
-
-A request under an outdated generation is refused with status 4, and a change
-of holder clears the staged frame and resets the settings.
-
-It keeps no clock. A lease lapses when a test says so:
+A test acts as another application, the user or the bus would:
 
 ```python
-board.take_over(name='MESH')   # another application takes the claim
-board.let_go()                 # the claim ends
-board.end_takeover()           # the takeover's keepalive runs out
-board.reconfigure(controls=...)  # a profile switch, which changes the state token
+board.take_over(name=b'MESH')    # another application takes the claim
+board.let_go()                   # the claim ends
+board.suspend(); board.resume()  # a USB suspend ends the takeover
+board.rewire(controls=...)       # a profile switch, which changes the state token
+board.unplug(); board.replug()   # the board leaves the bus and returns
 ```
 
 It can also fail on request, which the resilience tests use:
 
 ```python
-board.drop.add(hlp.CMD_GET_PAGE)     # leave that command unanswered
-board.reject.add(hlp.CMD_STAGE)      # answer it with a status other than 0
-board.hooks.append(callback)         # run something before each request is answered
+board.drop.add(hl.CMD_GET_PAGE)                    # leave that command unanswered
+board.reject[hl.CMD_STAGE] = hl.STATUS_UNSUPPORTED  # answer it with that status
+board.hooks.append(callback)                       # run something before each request
 ```
 
-`attach(monkeypatch, *boards)` makes discovery find several fake boards, for
-the tests that pick one of several. `ScriptedConnection` is a spice2x
-connection that answers a scripted run of polls, each of which can act on the
-board first, then ends the run as Ctrl-C does.
+`on_clock(monkeypatch, board)` runs the bridge and the library on the board's
+clock, so a wait takes no real time. `attach(monkeypatch, *boards)`, from the
+library, makes discovery find several boards, for the tests that pick one of
+several. `ScriptedConnection` is a spice2x connection that answers a scripted
+run of polls, each of which can act on the board first, then ends the run as
+Ctrl-C does.
 
 `M_ULTRA_LIGHTS` is the Lights page of a Haute42 COSMOX M Ultra, with 46
 lights. Two controls have two lights each, and the case strip has 30.
 `M_ULTRA_CONTROLS` is the same board's Controls page: 21 pins, Up and L3 on
 two pins each, a turbo pin, and four controls wired but unlit.
-
-The fake follows `FakeBoard` and `ModelBoard` in gp2040ce-binary-tools
-(`tests/hostlighting_fakes.py`), the reference host's own fakes.
 
 `stub_server.py` is the fake for the game side. It speaks the Spice API wire
 format over a loopback socket, with a hook for animating its lights.
@@ -111,7 +100,7 @@ board claims its lights first and stops if another application holds them. It
 gives the claim up when it finishes, including on failure, which restores the
 board's own animations.
 
-The reference tools in [gp2040ce-binary-tools][binary-tools] complement
+The `hlp-*` commands of [gp2040ce-hostlighting][hostlighting] complement
 these. `hlp-conformance` shows that a board's firmware follows the protocol,
 `hlp-caps` prints every page it has, and `hlp-fill --exclusive` or
 `hlp-stream` is a second application to try the bridge against.
@@ -125,7 +114,7 @@ python -m tests.hardware_probe
 The probe is read-only. It sends `HELLO` and `GET_PAGE` and nothing else, and
 it claims nothing and stages nothing, so it can run during a game.
 
-It prints, decoded by the bridge's own code:
+It prints, as the bridge reads it:
 
 - the protocol version and the capabilities `HELLO` lists
 - the board's identity
@@ -201,7 +190,7 @@ Two things to watch:
 | A board behaving unexpectedly | `hardware_probe` first, then the check closest to the behaviour |
 
 A board is not required to contribute. The automated suite runs the bridge
-and the hardware checks against the fake board, and a change is pinned there
+and the hardware checks against the model board, and a change is pinned there
 first. The hardware checks confirm behaviour on a real board.
 
-[binary-tools]: https://github.com/OpenStickCommunity/gp2040ce-binary-tools
+[hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting

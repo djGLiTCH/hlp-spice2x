@@ -18,7 +18,7 @@ visible:
   so there should be none.
 
 While it runs, another application can be tried against it. `hlp-fill` from
-gp2040ce-binary-tools stops and names hlp-spice2x as the holder, and with
+gp2040ce-hostlighting stops and names hlp-spice2x as the holder, and with
 `--force` takes the lights over, which this run reports and then waits out.
 
 The profile it writes is generated from what the board reports, so it maps only
@@ -40,6 +40,8 @@ import pathlib
 import sys
 import threading
 import _thread
+
+from gp2040ce_hostlighting.protocol import ADDRESSING_ACTION, ADDRESSING_KIND
 
 from hlp_spice2x import hlp
 from hlp_spice2x.__main__ import main as cli_main
@@ -74,10 +76,10 @@ def describe_board(prefix):
     try:
         caps = hlp.negotiate(device)
         controls = named_controls(caps)
-        chase = [control for control in controls if control[0] == hlp.ADDRESSING_ACTION]
+        chase = [control for control in controls if control[0] == ADDRESSING_ACTION]
         # a strip is a kind of light the board has many of, typically the case
         strips = [(control, len(caps.lights_of(control))) for control in controls
-                  if control[0] == hlp.ADDRESSING_KIND and len(caps.lights_of(control)) > 1]
+                  if control[0] == ADDRESSING_KIND and len(caps.lights_of(control)) > 1]
         strip, strip_lights = strips[0] if strips else (None, 0)
         multi = next((control for control in chase if len(caps.lights_of(control)) > 1), None)
         return chase, strip, strip_lights, multi

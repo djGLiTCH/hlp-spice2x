@@ -7,7 +7,9 @@ import json
 import pathlib
 
 import pytest
+from gp2040ce_hostlighting.protocol import ADDRESSING_ACTION, ADDRESSING_KIND
 
+from hlp_spice2x import hlp
 from hlp_spice2x import profile as profile_module
 
 
@@ -284,3 +286,24 @@ def test_a_range_key_with_nothing_in_it_is_reported(tmp_path, empty):
 def test_load_is_annotated_with_what_it_returns():
     """Test that the annotation agrees with the docstring and the call site."""
     assert profile_module.load.__annotations__['return'] is tuple
+
+
+def test_every_profile_name_maps_to_its_action_or_kind():
+    """Test the control names against GP2040-CE's GpioAction and LightType values."""
+    targets = hlp.CONTROL_TARGETS
+    assert [targets[name][1] for name in ('UP', 'DOWN', 'LEFT', 'RIGHT')] == [1, 2, 3, 4]
+    assert [targets[name][1] for name in ('B1', 'B4', 'L1', 'R1', 'L2', 'R2')] == [5, 8, 9, 10, 11, 12]
+    assert [targets[name][1] for name in ('S1', 'S2', 'A1', 'A2', 'L3', 'R3')] == [13, 14, 15, 16, 17, 18]
+    assert [targets[name][1] for name in ('A3', 'A4', 'E1', 'E12')] == [41, 42, 43, 54]
+    assert all(targets[name][0] == ADDRESSING_ACTION for name in ('UP', 'R3', 'A3', 'E12'))
+    assert [targets[name] for name in ('CASE', 'TURBO', 'PLED1', 'PLED4')] == [
+        (ADDRESSING_KIND, 1), (ADDRESSING_KIND, 2), (ADDRESSING_KIND, 3), (ADDRESSING_KIND, 6)]
+    assert len(targets) == 38
+
+
+def test_a_control_is_named_back_as_the_profile_wrote_it():
+    """Test the reverse mapping, and a value with no name."""
+    assert hlp.control_name(hlp.CONTROL_TARGETS['L3']) == 'L3'
+    assert hlp.control_name(hlp.CONTROL_TARGETS['CASE']) == 'CASE'
+    assert hlp.control_name((ADDRESSING_ACTION, 32)) == 'action 32'
+    assert hlp.control_name((ADDRESSING_KIND, 9)) == 'kind 9'

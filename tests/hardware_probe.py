@@ -28,8 +28,8 @@ What is printed, in order:
 The two tables are then checked against the Summary's counts and against each
 other, and the probe exits non-zero if a check fails.
 
-`hlp-caps` in gp2040ce-binary-tools prints every page and field the protocol
-has. This prints the ones the bridge reads, decoded by the bridge's own code.
+`hlp-caps` in gp2040ce-hostlighting prints every page and field the protocol
+has. This prints the ones the bridge reads, as the bridge reads them.
 
 Run it from the repository root:
 
@@ -40,83 +40,77 @@ SPDX-License-Identifier: GPL-3.0-or-later
 """
 import sys
 
+from gp2040ce_hostlighting import protocol as hl
+from gp2040ce_hostlighting.protocol import key_name
+
 from hlp_spice2x import hlp
 
 KIND_NAMES = {0: 'button', 1: 'case', 2: 'turbo', 3: 'player 1', 4: 'player 2', 5: 'player 3',
               6: 'player 4'}
 
 
-def key_name(key: int) -> str:
-    """Name a page 10 key as a GPIO pin, a Hall-effect trigger or an expander pin."""
-    if key < 0x30:
-        return f"GP{key}"
-    if 0x80 <= key < 0xA0:
-        return f"HE{key - 0x80}"
-    if 0xC0 <= key < 0xD0:
-        return f"PCF{key - 0xC0}"
-    return f"key 0x{key:02X}"
-
-
 def light_mark(record) -> str:
     """Describe one Lights record by its ordinal, its LEDs and the key of the input it follows."""
-    mark = f"#{record['ordinal']}@LED{record['first_led']}+{record['led_count']}"
-    return mark if record['owner_pin'] is None else f"{mark} on {key_name(record['owner_pin'])}"
+    mark = f"#{record.ordinal}@LED{record.leds.first_led}+{record.leds.led_count}"
+    return mark if record.owner.pin is None else f"{mark} on {key_name(record.owner.pin)}"
 
 
 def action_name(action) -> str:
     """Name an action as a profile would, or by its value where a profile cannot name it."""
     if action is None:
         return 'none'
-    return hlp.control_name((hlp.ADDRESSING_ACTION, action))
+    return hlp.control_name((hl.ADDRESSING_ACTION, action))
 
 
 def describe_hello(hello) -> None:
     """Print the decoded HELLO, naming the bitmaps the bridge gates on."""
-    print(f"\nHELLO: protocol {hello['major']}.{hello['minor']}, board ID {hello['board_id']}, "
-          f"reply queue limit {hello['queue_limit']}")
-    print(f"   request flags        {sorted(hello['flags'])}")
-    print(f"   commands             {', '.join(f'0x{command:02X}' for command in sorted(hello['commands']))}")
-    print(f"   pages                {sorted(hello['pages'])}")
-    print(f"   addressing modes     {sorted(hello['addressing'])}")
-    print(f"   pixel formats        {sorted(hello['pixel_formats'])}")
-    print(f"   events               {sorted(hello['events'])}, "
-          f"enabled now {sorted(hello['subscribed'])}")
-    missing = hlp.lacking(hello, (hlp.ADDRESSING_LED_RUN, hlp.ADDRESSING_LIGHT,
-                                  hlp.ADDRESSING_ACTION, hlp.ADDRESSING_KIND))
+    print(f"\nHELLO: protocol {hello.major}.{hello.minor}, board ID {hello.board_id}, "
+          f"reply queue limit {hello.reply_queue_limit}")
+    print(f"   request flags        {sorted(hello.request_flags)}")
+    print(f"   commands             {', '.join(f'0x{command:02X}' for command in sorted(hello.commands))}")
+    print(f"   pages                {sorted(hello.pages)}")
+    print(f"   addressing modes     {sorted(hello.addressing_modes)}")
+    print(f"   pixel formats        {sorted(hello.pixel_formats)}")
+    print(f"   events               {sorted(hello.events)}, "
+          f"enabled now {sorted(hello.events_enabled)}")
+    missing = hlp.lacking(hello, (hl.ADDRESSING_LED_RUN, hl.ADDRESSING_LIGHT,
+                                  hl.ADDRESSING_ACTION, hl.ADDRESSING_KIND))
     print(f"   the bridge needs     {'nothing this board lacks' if not missing else ', '.join(missing)}")
 
 
-def describe_state(state, token) -> None:
+def describe_state(read) -> None:
     """Print the decoded page 1."""
+    record = read.records[0]
+    state, controller, settings = record.state, record.controller, record.settings
     print("\npage 1, state:")
-    print(f"   host frame shown     {state['takeover_live']} (takeover number {state['takeover_number']})")
-    print(f"   input mode           {state['input_mode']}")
-    print(f"   profile              {state['profile']}")
-    print(f"   brightness step      {state['brightness_step']}")
-    holder = (f"'{state['holder_name']}' (token 0x{state['holder_token']:08X}"
-              f"{', exclusive' if state['claim_exclusive'] else ''})"
-              if state['holder_token'] else 'nobody')
-    print(f"   lights claimed by    {holder}, claim generation {state['claim_generation']}")
-    print(f"   takeover settings    {'overlay' if state['overlay'] else 'whole frame'}, "
-          f"{state['keepalive_ms']} ms keepalive, board brightness "
-          f"{'applied' if state['brightness_applied'] else 'ignored'}")
-    print(f"   state token          0x{token:08X} (changes when a configuration page does)")
+    print(f"   host frame shown     {state.takeover_live} (takeover number {state.takeover_number})")
+    print(f"   input mode           {state.input_mode}")
+    print(f"   profile              {state.profile}")
+    print(f"   brightness step      {state.brightness_step_shown}")
+    holder = (f"'{controller.application_name}' (token 0x{controller.holder_token:08X}"
+              f"{', exclusive' if controller.exclusive else ''})"
+              if controller.holder_token else 'nobody')
+    print(f"   lights claimed by    {holder}, claim generation {controller.claim_generation}")
+    print(f"   takeover settings    {'overlay' if settings.takeover == hl.TAKEOVER_OVERLAY else 'whole frame'}, "
+          f"{settings.keepalive_ms} ms keepalive, board brightness "
+          f"{'applied' if settings.brightness_applied else 'ignored'}")
+    print(f"   state token          0x{read.token:08X} (changes when a configuration page does)")
 
 
-def describe_summary(summary) -> None:
+def describe_summary(summary, counters) -> None:
     """Print the decoded page 8."""
     print("\npage 8, summary:")
-    print(f"   LED extent           {summary['led_extent']} (the number to size a frame from)")
-    print(f"   addressable limit    {summary['led_limit']} (an LED run reaching past it stages nothing)")
-    print(f"   render rate          {summary['render_hz']} Hz"
-          if summary['render_hz'] else "   render rate          not stated")
-    print(f"   colour format        {summary['colour_format']} "
-          f"({hlp.LED_FORMAT_NAMES.get(summary['colour_format'], 'unknown')}), "
-          f"white channel {hlp.has_white_channel(summary['colour_format'])}")
-    print(f"   controls             {summary['controls']} "
-          f"({summary['lit_controls']} lit, {summary['unlit_controls']} unlit)")
-    print(f"   lights               {summary['lights']}")
-    changes = ', '.join(f"{page}: {count}" for page, count in sorted(summary['page_changes'].items()))
+    print(f"   LED extent           {summary.led_extent} (the number to size a frame from)")
+    print(f"   addressable limit    {summary.led_limit} (an LED run reaching past it stages nothing)")
+    print(f"   render rate          {summary.render_hz} Hz"
+          if summary.render_hz else "   render rate          not stated")
+    print(f"   colour format        {summary.colour_format} "
+          f"({hlp.LED_FORMAT_NAMES.get(summary.colour_format, 'unknown')}), "
+          f"white channel {summary.white_channel}")
+    print(f"   controls             {summary.controls} "
+          f"({summary.lit_controls} lit, {summary.unlit_controls} unlit)")
+    print(f"   lights               {summary.lights}")
+    changes = ', '.join(f"{hl.PAGE_SUMMARY + index}: {count}" for index, count in enumerate(counters))
     print(f"   change counters      {changes}")
 
 
@@ -125,11 +119,11 @@ def describe_lights(records) -> None:
     print(f"\npage 11, lights: {len(records)} record(s)")
     owners = {}
     for record in records:
-        if record['kind'] == hlp.KIND_BUTTON and record['owner_action'] is not None:
-            owner = action_name(record['owner_action'])
+        if record.kind.value == hl.KIND_BUTTON and record.owner.action is not None:
+            owner = action_name(record.owner.action)
         else:
-            owner = hlp.CONTROL_NAMES.get((hlp.ADDRESSING_KIND, record['kind']),
-                                          KIND_NAMES.get(record['kind'], f"kind {record['kind']}"))
+            owner = hlp.CONTROL_NAMES.get((hl.ADDRESSING_KIND, record.kind.value),
+                                          KIND_NAMES.get(record.kind.value, f"kind {record.kind.value}"))
         owners.setdefault(owner, []).append(record)
     for owner, rows in owners.items():
         marks = ', '.join(light_mark(row) for row in rows)
@@ -139,12 +133,12 @@ def describe_lights(records) -> None:
 
 def describe_controls(records) -> None:
     """Print the Controls page one input per line, marking duplicated controls."""
-    lit = sum(1 for record in records if record['lit'])
+    lit = sum(1 for record in records if record.input.lit)
     print(f"\npage 10, controls: {len(records)} record(s), {lit} lit, {len(records) - lit} unlit")
     for record in records:
-        print(f"   {key_name(record['key']):6} action {record['action']:<4} "
-              f"{action_name(record['action']):10} {'lit' if record['lit'] else 'unlit'}"
-              f"{' (duplicate)' if record['duplicated'] else ''}")
+        print(f"   {key_name(record.input.key):6} action {record.input.action:<4} "
+              f"{action_name(record.input.action):10} {'lit' if record.input.lit else 'unlit'}"
+              f"{' (duplicate)' if record.input.duplicated else ''}")
 
 
 def check_tables(summary, controls, lights) -> list:
@@ -159,16 +153,16 @@ def check_tables(summary, controls, lights) -> list:
     :param lights: every page 11 record
     :return: (what was checked, whether it held) for each check made
     """
-    lit = sum(1 for record in controls if record['lit'])
-    counted = (summary['controls'] == len(controls) and summary['lit_controls'] == lit
-               and summary['lit_controls'] + summary['unlit_controls'] == summary['controls'])
-    checks = [(f"{summary['lit_controls']} lit + {summary['unlit_controls']} unlit = "
-               f"{summary['controls']} controls, {lit} of {len(controls)} records marked lit", counted),
-              (f"{summary['lights']} lights, {len(lights)} records", summary['lights'] == len(lights))]
-    keys = {record['key'] for record in controls}
-    lit_keys = sorted(record['key'] for record in controls if record['lit'])
-    owner_pins = sorted({record['owner_pin'] for record in lights
-                         if record['owner_pin'] is not None and record['owner_pin'] in keys})
+    lit = sum(1 for record in controls if record.input.lit)
+    counted = (summary.controls == len(controls) and summary.lit_controls == lit
+               and summary.lit_controls + summary.unlit_controls == summary.controls)
+    checks = [(f"{summary.lit_controls} lit + {summary.unlit_controls} unlit = "
+               f"{summary.controls} controls, {lit} of {len(controls)} records marked lit", counted),
+              (f"{summary.lights} lights, {len(lights)} records", summary.lights == len(lights))]
+    keys = {record.input.key for record in controls}
+    lit_keys = sorted(record.input.key for record in controls if record.input.lit)
+    owner_pins = sorted({record.owner.pin for record in lights
+                         if record.owner.pin is not None and record.owner.pin in keys})
     joined = lit_keys == owner_pins
     checks.append((f"lit controls match the {len(owner_pins)} owner pins on the Lights page" if joined
                    else f"lit keys {lit_keys} against the Lights page's owner pins {owner_pins}",
@@ -183,7 +177,7 @@ def main(argv=None) -> int:
     :return: process exit status
     """
     prefix = (argv or sys.argv[1:] or [''])[0]
-    found = hlp.find_devices()
+    found = hl.find_devices()
     print(f"{len(found)} Host Lighting interface(s) found")
     if not found:
         print(hlp.no_interface())
@@ -193,14 +187,14 @@ def main(argv=None) -> int:
     try:
         hello = device.hello()
         describe_hello(hello)
-        if hlp.PAGE_IDENTITY in hello['pages']:
-            label, firmware = device.read_identity()
+        if hl.PAGE_IDENTITY in hello.pages:
+            label, firmware = hlp.label_and_firmware(device)
             print(f"\npage 0, identity: {label} ({firmware})")
-        describe_state(*device.read_record(hlp.PAGE_STATE, hlp.STATE_GROUPS))
+        describe_state(device.read_record(hl.PAGE_STATE, hlp.STATE_GROUPS))
 
         # what a host would decide from all of the above
         caps = hlp.negotiate(device)
-        describe_summary(caps.summary)
+        describe_summary(caps.summary, caps.cache.counters)
         describe_lights(caps.lights)
         coherent = True
         if caps.controls is None:

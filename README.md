@@ -29,22 +29,22 @@ needs [hlp-spice2x v0.3.0][v0.3.0] or a firmware update. See
 
 ## Example host implementation
 
-The bridge is also an example of Host Lighting Protocol support in a host
-application. It follows the protocol's whole host flow. It claims the board,
-shares it with other applications, and follows changes to the board's
-configuration.
+The bridge is also an example of a host application built on
+[gp2040ce-hostlighting][hostlighting], the reference host for the Host
+Lighting Protocol. The library speaks the protocol and runs its whole host
+flow. It claims the board, shares it with other applications, and follows
+changes to the board's configuration. The bridge decides what to show.
 
 The parts to read, in the order a host does them:
 
 | Where | What it shows |
 |---|---|
-| `hlp_spice2x/hlp.py` | The wire format: report framing, request flags, reply matching when other applications' replies arrive, `HELLO`, the page decoders by field group, and the `STAGE` encoders |
-| `hlp.negotiate` | Confirming the major version, checking `HELLO`'s capability bitmaps for what is used, and reading the pages once at connect |
-| `hlp.HostLightingCapabilities` | Answering call sites from the pages, and reading again only the pages whose change counter moved |
-| `bridge.LightsClaim` | The claim: taking it, renewing it, losing it to another application, waiting, and sending `CONFIGURE` again when it is taken again |
+| `hlp.REQUIRED`, `hlp.requirements` | What the bridge needs a board to list in `HELLO`, with the addressing modes a profile uses |
+| `hlp.HostLightingCapabilities` | Answering call sites from the library's cache of the pages |
+| `bridge.run` | The loop on the library's `Session`: the claim, the events, the pages read again, the frames and the reconnect |
 | `bridge.staging_for` | How each target reaches the board's lights: by action, by kind, by light ordinal or as an LED run |
-| `bridge.send_frame` | A frame as reports sent with `NO_REPLY` and one answered report carrying `COMMIT_AFTER`, and the order of the passes |
-| `tests/fake_board.py` | A fake board parameterised by capabilities that keeps the state the protocol gives a board, so the host flow is tested without hardware |
+| `bridge.frame_for` | A frame as the library's `Frame`, in the order of the passes |
+| `tests/boards.py` | The library's model board, wired from lights and controls named as a profile names them, so the host flow is tested without hardware |
 
 What a host on this protocol does:
 
@@ -61,8 +61,6 @@ What a host on this protocol does:
   again.
 
 The protocol is specified in [docs/host-lighting.md][spec].
-[gp2040ce-binary-tools][binary-tools] holds the reference host, whose framing
-and decoders this one follows.
 
 ## Requirements
 
@@ -72,21 +70,18 @@ and decoders this one follows.
   [Firmware](#firmware).
 - spice2x started with `-api PORT`, and with `-apipass PASS` where a password
   is wanted.
-- Python 3.9 or later.
+- Python 3.14 or later, and [gp2040ce-hostlighting][hostlighting], which pip
+  installs with the bridge.
 
 ## Firmware
 
 Host Lighting is a proposed add-on, open upstream as [PR #1691][pr-1691].
 Until it merges the board needs a test build. This version was written
-against the [HLP v2.0 release candidate 7 test builds][rc7].
+against the [HLP v2.0 release candidate 9 test builds][rc9].
 
 There is a UF2 for every board GP2040-CE supports, with flashing and setup
 instructions. Enable the add-on in the web configurator once the board runs
 one of them.
-
-HLP v2.0 release candidates 1 to 4 have a fault that release candidate 5 and
-later fix. The first boot after a firmware update can start the board in a
-boot hotkey's input mode or in the web configurator with no button held.
 
 HLP 2.0 is a release candidate, so this version of the bridge is a
 pre-release until the protocol is final.
@@ -102,8 +97,8 @@ everything else from the capabilities the board lists.
 | `CLAIM`, `CONFIGURE`, `STAGE`, `CLEAR`, the request flags, and pages 1, 8 and 11 | Required. Without them the bridge stops and names what is missing. |
 | The addressing modes | Required as the profile uses them. A control name is staged by action. `CASE`, `TURBO` and `PLED1`-`PLED4` are staged by kind, an `index` by light and a `range` as an LED run. |
 | Page 10, the controls | The startup warnings tell a mapped control the board does not have from one it has with no LED. |
-| `SUBSCRIBE` and the `STATE_CHANGED` event | The bridge learns of a change on the board from an event. Without them it reads page 1 every 5 s. |
-| The RGBW pixel format, on a GRBW or RGBW chain | A white component in a profile colour is sent. |
+| `SUBSCRIBE` and the `STATE_CHANGED` event | The bridge learns of a change on the board from an event. With or without them it reads page 1 at least once a second. |
+| The RGBW pixel format, on a chain the Summary flags as having a white channel | A white component in a profile colour is sent. |
 
 A later 2.x board is driven the same way, by what it lists.
 
@@ -115,7 +110,7 @@ The bridge prints what it read at startup. This example is from a Haute42
 COSMOX M Ultra:
 
 ```
-board: Haute42 COSMOX M Ultra (v0.7.12-144-g78fa288)
+board: Haute42 COSMOX M Ultra (v0.7.12-138-ge9313e9)
 board speaks HLP v2.0: 46 lights on 46 LEDs, renders at 40 Hz, GRB chain (white channel: no), state changes by event
 takeover: whole frame, 2000 ms keepalive, applying board brightness
 controls the board gives more than one light, all of which will be lit: L3, Up
@@ -251,6 +246,10 @@ takeover.
 
 The bridge streams at the board's render rate, up to 120 frames per second.
 
+In overlay mode the unmapped LEDs show the board's own animations. While those
+animations are idle, after the board's LED idle timeout, the unmapped LEDs are
+off. A press of a lit control wakes them.
+
 The bridge does not use spice2x's built-in HID lights feature. That feature
 expects a device declaring its lights in its HID descriptor, which cannot
 describe a board whose LED map the user configures.
@@ -262,9 +261,9 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite needs no board. It runs the real client against a fake board that
-is parameterised by what a board lists in `HELLO` and keeps the state the
-protocol gives a board.
+The suite needs no board. It runs the bridge against gp2040ce-hostlighting's
+model board, which answers as the firmware does and keeps the protocol's
+timing on a clock the tests control.
 
 Some checks need a board. They show what a board reports about itself,
 whether each light is addressed correctly, whether the staging order holds,
@@ -293,16 +292,14 @@ that needs action when upgrading.
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
 
-`hlp_spice2x/hlp.py` follows the Host Lighting helpers proposed for
-gp2040ce-binary-tools in [PR #12][pr-12]. It is kept as its own module so this
-tool needs only `hidapi`. The capability layer and the timeout and disconnect
-handling are this project's own.
+The protocol layer is [gp2040ce-hostlighting][hostlighting], a separate
+package, also GPL-3.0-or-later. `hlp_spice2x/hlp.py` holds the bridge's own
+part: the control names, what it requires of a board and its messages.
 
 [gp2040-ce]: https://github.com/OpenStickCommunity/GP2040-CE
 [spice2x]: https://github.com/spice2x/spice2x.github.io
 [v0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.3.0
-[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc7/docs/host-lighting.md
-[binary-tools]: https://github.com/OpenStickCommunity/gp2040ce-binary-tools
+[hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
+[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc9/docs/host-lighting.md
 [pr-1691]: https://github.com/OpenStickCommunity/GP2040-CE/pull/1691
-[rc7]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc7
-[pr-12]: https://github.com/OpenStickCommunity/gp2040ce-binary-tools/pull/12
+[rc9]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc9

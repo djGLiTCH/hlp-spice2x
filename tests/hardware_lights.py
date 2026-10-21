@@ -4,9 +4,9 @@ A functional check to run by eye after changing anything that touches staging.
 Each phase announces what should be visible before it starts, holds it long
 enough to look at, and moves on. It takes about a hundred seconds.
 
-Everything goes through the bridge's own claim and staging. Every control it
-uses is taken from what the board reports. A phase with nothing to show on a
-given board says so and is skipped.
+Everything goes through the bridge's staging and gp2040ce-hostlighting's
+claim. Every control it uses is taken from what the board reports. A phase
+with nothing to show on a given board says so and is skipped.
 
 The eleven phases, and what each tests:
 
@@ -39,8 +39,12 @@ Run it from the repository root:
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
 """
+import logging
 import sys
 import time
+
+from gp2040ce_hostlighting import protocol as hl
+from gp2040ce_hostlighting.claim import ClaimState, LightsClaim
 
 from hlp_spice2x import bridge, hlp
 from hlp_spice2x import profile as profile_module
@@ -63,10 +67,10 @@ def named_controls(caps) -> list:
     """
     controls = []
     for record in caps.lights:
-        if record['kind'] == hlp.KIND_BUTTON:
-            control = (hlp.ADDRESSING_ACTION, record['owner_action'])
+        if record.kind.value == hl.KIND_BUTTON:
+            control = (hl.ADDRESSING_ACTION, record.owner.action)
         else:
-            control = (hlp.ADDRESSING_KIND, record['kind'])
+            control = (hl.ADDRESSING_KIND, record.kind.value)
         if control in hlp.CONTROL_NAMES and control not in controls and caps.lights_of(control):
             controls.append(control)
     return controls
@@ -87,11 +91,11 @@ class LightsCheck:
         self.failures = []
         self.last_frame = None
         # whole-frame takeover, 10 s keepalive, honour the board's brightness
-        self.claim = bridge.LightsClaim(device, False, 10000, True, print)
+        self.claim = LightsClaim(device, bridge.CLAIM_NAME, hl.Settings(keepalive_ms=10000))
 
         self.controls = named_controls(caps)
         self.singles = [control for control in self.controls
-                        if control[0] == hlp.ADDRESSING_ACTION]
+                        if control[0] == hl.ADDRESSING_ACTION]
         # controls the board gives more than one light, which is what makes
         # per-light targeting worth demonstrating at all
         self.multi = [control for control in self.singles if len(caps.lights_of(control)) > 1]
@@ -127,9 +131,8 @@ class LightsCheck:
         The claim is renewed first. A shorter timeout applies to the lease
         already running, which would lapse if its last renewal were older.
         """
-        self.claim.renew()
-        self.claim.settings.update(overlay=overlay, keepalive_ms=timeout_ms)
-        self.claim.configure()
+        self.claim.configure(hl.Settings(
+            takeover=hl.TAKEOVER_OVERLAY if overlay else hl.TAKEOVER_WHOLE_FRAME, keepalive_ms=timeout_ms))
         self.last_frame = {}
 
     def wait(self, seconds) -> None:
@@ -137,13 +140,12 @@ class LightsCheck:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             time.sleep(0.1)
-            if time.monotonic() >= self.claim.due:
-                try:
-                    self.claim.renew()
-                except hlp.HostLightingTimeout:
-                    pass  # worth sending, not worth insisting on
-                if not self.claim.held:
-                    raise hlp.HostLightingError("another application took the lights over")
+            try:
+                self.claim.maintain()
+            except hl.HostLightingTimeoutError:
+                pass  # worth sending, not worth insisting on
+            if self.claim.state is not ClaimState.HELD:
+                raise hl.HostLightingError("another application took the lights over")
 
     def hold(self, frame, staging, seconds) -> None:
         """Publish a frame and hold it, clearing whatever left the frame.
@@ -155,11 +157,13 @@ class LightsCheck:
         departed = self.last_frame is not None and bool(set(self.last_frame) - set(frame)
                                                         or not self.last_frame)
         self.last_frame = dict(frame)
-        result = bridge.send_frame(self.device, frame, staging, clear_first=departed)
-        if result.holder is not None:
-            self.fail(f"frame refused: the claim is held by '{result.holder['holder_name']}'")
-        elif not result:
-            self.fail("frame went unacknowledged")
+        try:
+            result = bridge.send_frame(self.device, frame, staging, clear_first=departed)
+        except hl.HostLightingRejectedError as error:
+            self.fail(f"frame refused: {error}")
+        else:
+            if not result.acknowledged:
+                self.fail("frame went unacknowledged")
         self.wait(seconds)
 
     def build_profile(self) -> dict:
@@ -173,8 +177,8 @@ class LightsCheck:
             for index in range(len(self.caps.lights_of(control))):
                 profile[f"l{control}.{index}"] = (('light', control, index), WHITE)
         if self.case:
-            first = min(record['first_led'] for record in self.case)
-            last = max(record['first_led'] + record['led_count'] for record in self.case)
+            first = min(record.leds.first_led for record in self.case)
+            last = max(record.leds.first_led + record.leds.led_count for record in self.case)
             profile['case'] = (('range', first, last - first), AMBER)
         return profile
 
@@ -182,7 +186,7 @@ class LightsCheck:
         """Run every phase this board can demonstrate."""
         profile = self.build_profile()
         staging = bridge.staging_for(profile, self.caps)
-        self.claim.take(False)
+        self.claim.take()
 
         self.phase(1, "every control in turn",
                    "each control lit white on its own, in the board's own order")
@@ -193,7 +197,7 @@ class LightsCheck:
         self.phase(2, "every light in turn, by its own ordinal",
                    "each individual light alone, so a control with two shows them "
                    "one at a time")
-        ordered = sorted((record['ordinal'], control, index) for control in self.controls
+        ordered = sorted((record.ordinal, control, index) for control in self.controls
                          for index, record in enumerate(self.caps.lights_of(control)))
         self.note(f"{len(ordered)} lights, 0.4s each")
         for ordinal, control, index in ordered:
@@ -260,7 +264,7 @@ class LightsCheck:
         self.hold(profile_module.resolve_frame({'x': 0.0}, ramp), ramp_staging, 0)
         for step in range(31):
             if not bridge.send_frame(self.device, profile_module.resolve_frame({'x': step / 30.0}, ramp),
-                                     ramp_staging):
+                                     ramp_staging).acknowledged:
                 self.fail(f"ramp frame {step} was not acknowledged")
             time.sleep(0.2)
 
@@ -290,8 +294,8 @@ class LightsCheck:
         steady = self.singles[0] if self.singles else self.controls[0]
         self.note(f"keepalive timeout 2000 ms, holding {hlp.control_name(steady)} amber for 8s")
         self.hold({('button', steady): AMBER}, staging, 8)
-        state, _ = self.device.read_record(hlp.PAGE_STATE, hlp.STATE_GROUPS)
-        if not state['takeover_live'] or state['holder_token'] != self.claim.token:
+        state = self.device.read_record(hl.PAGE_STATE, hlp.STATE_GROUPS).records[0]
+        if not state.state.takeover_live or not state.controller.held_by(self.claim.token):
             self.fail("the takeover or the claim did not survive the hold")
 
 
@@ -302,11 +306,16 @@ def main(argv=None) -> int:
     :return: process exit status, non-zero if the board objected to anything
     """
     prefix = (argv or sys.argv[1:] or [''])[0]
+    # the library's claim lines, the give up among them, are printed with the check's own
+    library = logging.getLogger('gp2040ce_hostlighting')
+    lines = bridge._ReportLines(print)
+    library.addHandler(lines)
+    library.setLevel(logging.INFO)
     device = hlp.open_device(prefix)
     check = None
     try:
-        caps = hlp.negotiate(device, (hlp.ADDRESSING_LED_RUN, hlp.ADDRESSING_LIGHT,
-                                      hlp.ADDRESSING_ACTION, hlp.ADDRESSING_KIND))
+        caps = hlp.negotiate(device, (hl.ADDRESSING_LED_RUN, hl.ADDRESSING_LIGHT,
+                                      hl.ADDRESSING_ACTION, hl.ADDRESSING_KIND))
         print(caps.summary_line())
         check = LightsCheck(device, caps)
         if not check.controls:
@@ -320,6 +329,7 @@ def main(argv=None) -> int:
         if check is not None:
             check.claim.give_up()
         device.close()
+        library.removeHandler(lines)
 
     failures = check.failures if check else []
     print(f"\n{len(failures)} protocol-level failure(s)"
