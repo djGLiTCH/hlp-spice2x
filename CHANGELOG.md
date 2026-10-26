@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
-## [Unreleased]
+## [0.5.0] - 2026-10-26
 
 This version is built on [gp2040ce-hostlighting][hostlighting], the reference
 host for the Host Lighting Protocol. It is a pre-release, built against the
@@ -250,7 +250,7 @@ Host Lighting Protocol. Profiles name controls. The firmware resolves them
 against each board's own LED map, so one profile works across layouts.
 
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
-[Unreleased]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.4.0...HEAD
+[0.5.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.1.0...v0.2.0
