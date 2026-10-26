@@ -20,6 +20,9 @@ pre-release.
 
 ### Changed
 
+- gp2040ce-hostlighting 1.0.0rc2 speaks release candidate 10. pip installs it
+  with the bridge from its `v1.0.0rc2` tag on GitHub until 1.0.0 is on PyPI,
+  with HLP v2.0 final.
 - The bridge's messages, the README and `hardware_probe` name the Lights page
   as page 12.
 
