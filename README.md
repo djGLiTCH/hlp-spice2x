@@ -77,8 +77,10 @@ The protocol is specified in [docs/host-lighting.md][spec].
 ## Firmware
 
 Host Lighting is a proposed add-on, open upstream as [PR #1691][pr-1691].
-Until it merges the board needs a test build. This version was written
-against the [HLP v2.0 release candidate 9 test builds][rc9].
+Until it merges the board needs a test build. This version needs an HLP v2.0
+release candidate 10 build or a later 2.0 candidate. Release candidate 9 and
+earlier lay out the pages differently and are not driven. The test builds are
+published with each [release candidate][rc9].
 
 There is a UF2 for every board GP2040-CE supports, with flashing and setup
 instructions. Enable the add-on in the web configurator once the board runs
@@ -95,7 +97,7 @@ everything else from the capabilities the board lists.
 
 | The board lists | What the bridge does with it |
 |---|---|
-| `CLAIM`, `CONFIGURE`, `STAGE`, `CLEAR`, the request flags, and pages 1, 8 and 11 | Required. Without them the bridge stops and names what is missing. |
+| `CLAIM`, `CONFIGURE`, `STAGE`, `CLEAR`, the request flags, and pages 1, 8 and 12 | Required. Without them the bridge stops and names what is missing. |
 | The addressing modes | Required as the profile uses them. A control name is staged by action. `CASE`, `TURBO` and `PLED1`-`PLED4` are staged by kind, an `index` by light and a `range` as an LED run. |
 | Page 10, the controls | The startup warnings tell a mapped control the board does not have from one it has with no LED. |
 | `SUBSCRIBE` and the `STATE_CHANGED` event | The bridge learns of a change on the board from an event. With or without them it reads page 1 at least once a second. |

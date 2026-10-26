@@ -21,7 +21,7 @@ The bridge reads five pages:
   configuration page.
 * page 10 (controls) lists every control with an action, lit or not. It is
   the only page that can say a control does not exist.
-* page 11 (lights) lists every light, with its LEDs, kind and owning action.
+* page 12 (lights) lists every light, with its LEDs, kind and owning action.
 
 SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
 SPDX-License-Identifier: GPL-3.0-or-later
@@ -221,7 +221,7 @@ class HostLightingCapabilities:
         page but skipped by STAGE, so it is left out here too.
 
         :param control: an (addressing, address) pair from CONTROL_TARGETS
-        :return: the page 11 records STAGE by that action or kind colours
+        :return: the page 12 records STAGE by that action or kind colours
         """
         reached = self.cache.lights_reached(*control) if self.cache is not None else None
         if not reached:

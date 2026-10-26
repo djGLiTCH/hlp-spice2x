@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+This version speaks HLP v2.0 release candidate 10 (`HLP_v2.0-rc10`). It is a
+pre-release.
+
+### Breaking
+
+- Boards on HLP v2.0 rc9 and earlier are not driven. Release candidate 10
+  moves the Lights page from page 11 to page 12, and page 1's State group grows
+  from 9 to 10 bytes. On such a board the bridge stops with a timeout on its
+  page reads. Update the board to an HLP v2.0 rc10 build.
+
+### Changed
+
+- The bridge's messages, the README and `hardware_probe` name the Lights page
+  as page 12.
+
 ## [0.5.0] - 2026-10-26
 
 This version is built on [gp2040ce-hostlighting][hostlighting], the reference
@@ -250,6 +267,7 @@ Host Lighting Protocol. Profiles name controls. The firmware resolves them
 against each board's own LED map, so one profile works across layouts.
 
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
+[Unreleased]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.2.0...v0.3.0

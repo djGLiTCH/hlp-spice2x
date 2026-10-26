@@ -23,7 +23,7 @@ RED = (255, 0, 0)
 PROFILE = {'P1 Button 1': (('button', T['B1']), RED)}
 # HELLO as the protocol reference's worked example gives it, captured from a Haute42 COSMOX
 HELLO = bytes.fromhex('81 41 00 47 50 48 4c 02 00 433031343539302E 10 7f'
-                      '3e 00 0f 00 03 00 0f 00 00 00 00 00 00 00 03 00 0f 1f 00 00 f3 00 07 00 01 00 00 00'
+                      '3e 00 0f 00 03 00 1f 00 00 00 00 00 00 00 03 00 0f 3f 00 00 f3 00 07 00 01 00 00 00'
                       ).ljust(64, b'\x00')
 
 
@@ -104,7 +104,7 @@ def test_each_missing_capability_is_named():
                                 request_flags=hello.request_flags - {1}, pages=hello.pages - {hl.PAGE_LIGHTS},
                                 addressing_modes=hello.addressing_modes - {hl.ADDRESSING_ACTION})
     assert hlp.lacking(hello, {hl.ADDRESSING_ACTION}) == [
-        'command 0x03 (CLAIM)', 'request flag bit 1', 'page 11', 'addressing mode 6 (action)']
+        'command 0x03 (CLAIM)', 'request flag bit 1', 'page 12', 'addressing mode 6 (action)']
 
 
 @pytest.mark.parametrize('minor', [0, 1, 7, 255])
@@ -156,7 +156,7 @@ def test_something_that_is_not_a_host_lighting_interface_is_reported_as_such():
     ({'request_flags': HELLO_REQUEST_FLAGS - {4, 5, 6}},
      'request flag bit 4, request flag bit 5, request flag bit 6'),
     ({'pages': HELLO_PAGES - {hl.PAGE_SUMMARY}}, 'page 8'),
-    ({'pages': HELLO_PAGES - {hl.PAGE_LIGHTS}}, 'page 11'),
+    ({'pages': HELLO_PAGES - {hl.PAGE_LIGHTS}}, 'page 12'),
     ({'pixel_formats': HELLO_PIXEL_FORMATS - {0}}, 'pixel format 0'),
     ({'addressing_modes': {0, 1, 4, 5, 7}}, 'addressing mode 6'),
 ])

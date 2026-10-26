@@ -19,7 +19,7 @@ What is printed, in order:
 * Page 8 is the Summary, which gives the LED extent and addressable limit, the
   render rate and colour format, and a change counter for each configuration
   page.
-* Page 11 is the Lights page, which lists every light with its LEDs, its
+* Page 12 is the Lights page, which lists every light with its LEDs, its
   kind, and the pin and action it is tied to. A profile's `index` counts a
   control's lights in the order they appear here.
 * Page 10 is the Controls page, with one record per control carrying an
@@ -82,7 +82,7 @@ def describe_state(read) -> None:
     """Print the decoded page 1."""
     record = read.records[0]
     state, controller, settings = record.state, record.controller, record.settings
-    print("\npage 1, state:")
+    print(f"\npage {hl.PAGE_STATE}, state:")
     print(f"   host frame shown     {state.takeover_live} (takeover number {state.takeover_number})")
     print(f"   input mode           {state.input_mode}")
     print(f"   profile              {state.profile}")
@@ -99,7 +99,7 @@ def describe_state(read) -> None:
 
 def describe_summary(summary, counters) -> None:
     """Print the decoded page 8."""
-    print("\npage 8, summary:")
+    print(f"\npage {hl.PAGE_SUMMARY}, summary:")
     print(f"   LED extent           {summary.led_extent} (the number to size a frame from)")
     print(f"   addressable limit    {summary.led_limit} (an LED run reaching past it stages nothing)")
     print(f"   render rate          {summary.render_hz} Hz"
@@ -116,7 +116,7 @@ def describe_summary(summary, counters) -> None:
 
 def describe_lights(records) -> None:
     """Print the Lights page grouped by what a profile would name each light by."""
-    print(f"\npage 11, lights: {len(records)} record(s)")
+    print(f"\npage {hl.PAGE_LIGHTS}, lights: {len(records)} record(s)")
     owners = {}
     for record in records:
         if record.kind.value == hl.KIND_BUTTON and record.owner.action is not None:
@@ -134,7 +134,7 @@ def describe_lights(records) -> None:
 def describe_controls(records) -> None:
     """Print the Controls page one input per line, marking duplicated controls."""
     lit = sum(1 for record in records if record.input.lit)
-    print(f"\npage 10, controls: {len(records)} record(s), {lit} lit, {len(records) - lit} unlit")
+    print(f"\npage {hl.PAGE_CONTROLS}, controls: {len(records)} record(s), {lit} lit, {len(records) - lit} unlit")
     for record in records:
         print(f"   {key_name(record.input.key):6} action {record.input.action:<4} "
               f"{action_name(record.input.action):10} {'lit' if record.input.lit else 'unlit'}"
@@ -150,7 +150,7 @@ def check_tables(summary, controls, lights) -> list:
 
     :param summary: the decoded Summary
     :param controls: every page 10 record
-    :param lights: every page 11 record
+    :param lights: every page 12 record
     :return: (what was checked, whether it held) for each check made
     """
     lit = sum(1 for record in controls if record.input.lit)
@@ -189,7 +189,7 @@ def main(argv=None) -> int:
         describe_hello(hello)
         if hl.PAGE_IDENTITY in hello.pages:
             label, firmware = hlp.label_and_firmware(device)
-            print(f"\npage 0, identity: {label} ({firmware})")
+            print(f"\npage {hl.PAGE_IDENTITY}, identity: {label} ({firmware})")
         describe_state(device.read_record(hl.PAGE_STATE, hlp.STATE_GROUPS))
 
         # what a host would decide from all of the above
@@ -198,7 +198,7 @@ def main(argv=None) -> int:
         describe_lights(caps.lights)
         coherent = True
         if caps.controls is None:
-            print("\npage 10, controls: this firmware does not list the page")
+            print(f"\npage {hl.PAGE_CONTROLS}, controls: this firmware does not list the page")
         else:
             describe_controls(caps.controls)
             for what, held in check_tables(caps.summary, caps.controls, caps.lights):

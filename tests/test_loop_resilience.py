@@ -211,6 +211,18 @@ def test_a_configuration_change_re_resolves_the_controls_and_restages():
     assert board.sent(hl.CMD_CLEAR)
 
 
+def test_a_profile_switch_re_resolves_the_controls_once():
+    """Test that a profile hotkey's switch, which page 1, its pages and the token show in one event, restages once."""
+    board = Board(lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS)
+    # profile 2's pages: Up and Down swapped, each light kept on its pin
+    swapped = Board(lights=M_ULTRA_LIGHTS, controls=M_ULTRA_CONTROLS)
+    swapped.rewire(controls=[(pin, {1: 2, 2: 1}.get(action, action)) for pin, action in M_ULTRA_CONTROLS])
+    board.profile_pages[2] = (swapped.controls, swapped.lights)
+    text = run_with(board, ON, after(lambda: board.store_profile(2)), ON)
+    assert board.state[0][2] == 2 and board.frames == [{3: RED, 12: RED}, {1: RED}]
+    assert text.count('board configuration changed, controls re-resolved') == 1
+
+
 def test_a_configuration_change_points_at_the_profiles_raw_ranges():
     """Test that a profile using raw ranges is told to check them, since they do not follow."""
     board = Board()
@@ -647,7 +659,7 @@ def test_a_claim_another_application_took_is_not_reported_as_given_up():
 def test_a_change_to_a_page_the_bridge_does_not_read_restages_nothing():
     """Test that a moved state token alone, as an animation hotkey causes, sends no frame and no message.
 
-    Only page 12's change counter moves.
+    Only the Animations page's change counter moves.
     """
     board = Board()
     before = []
