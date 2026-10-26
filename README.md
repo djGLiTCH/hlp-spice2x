@@ -72,6 +72,7 @@ The protocol is specified in [docs/host-lighting.md][spec].
   is wanted.
 - Python 3.14 or later, and [gp2040ce-hostlighting][hostlighting], which pip
   installs with the bridge.
+- Git, which pip uses to install the bridge and the library from GitHub.
 
 ## Firmware
 

@@ -24,6 +24,8 @@ protocol's release candidate (`HLP_v2.0-rc9`).
 - The protocol, the claim, the frames and the configuration pages come from
   gp2040ce-hostlighting, which pip installs with the bridge. hidapi comes
   through it.
+- pip installs gp2040ce-hostlighting from its `v1.0.0rc1` tag on GitHub, which
+  needs git. The library moves to PyPI at 1.0.0, with HLP v2.0 final.
 - Whether a chain has a white emitter is the Summary's white channel flag. It
   was taken from the colour format.
 - The first frame after each start, and after the board returns, clears the
