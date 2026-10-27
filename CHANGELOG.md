@@ -15,8 +15,8 @@ pre-release.
 
 - Boards on HLP v2.0 rc9 and earlier are not driven. Release candidate 10
   moves the Lights page from page 11 to page 12, and page 1's State group grows
-  from 9 to 10 bytes. On such a board the bridge stops with a timeout on its
-  page reads. Update the board to an HLP v2.0 rc10 build.
+  from 9 to 10 bytes. On such a board the bridge stops and names the page the
+  firmware lays out differently. Update the board to an HLP v2.0 rc10 build.
 
 ### Changed
 
