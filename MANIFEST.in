@@ -20,3 +20,6 @@ include CHANGELOG.md
 
 # example profile and the guide to capturing real ones
 recursive-include profiles *.json *.md
+
+# the licence of the example profile, which cannot carry a header
+include REUSE.toml
