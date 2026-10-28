@@ -1,12 +1,17 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: test_device_errors.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Test finding a board, and a frame or a run when the board goes away.
 
 The protocol's transport is gp2040ce-hostlighting's, tested there. These test
 the bridge's own part: its messages for finding a board when none, or more
 than one, can be chosen, its listing of the boards, and what a frame or a run
 does when the board is lost.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import struct
 

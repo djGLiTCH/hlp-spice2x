@@ -1,3 +1,13 @@
+<!--
+hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+Filename: CHANGELOG.md
+Folder: (repository root)
+https://github.com/djGLiTCH/hlp-spice2x
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+SPDX-License-Identifier: GPL-3.0-or-later
+See LICENSES/GPL-3.0-or-later.txt at the repository root.
+-->
+
 # Changelog
 
 Notable changes to this project, newest first.
@@ -26,6 +36,10 @@ pre-release.
 - The bridge's messages, the README and `hardware_probe` name the Lights page
   as page 12.
 - Firmware and protocol links point at the `HLP_v2.0-rc10` tag.
+- Each file opens with gp2040ce-hostlighting's header: the project, the file
+  and its folder, the repository, the copyright and the licence. The licence
+  text moves to `LICENSES/GPL-3.0-or-later.txt`, and `REUSE.toml` covers the
+  example profile.
 
 ## [0.5.0] - 2026-10-26
 

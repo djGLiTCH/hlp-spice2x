@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: profile.py
+# Folder: hlp_spice2x
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Profiles map a game's light names onto a board's controls.
 
 Light names differ per game, so the mapping lives in a JSON file:
@@ -15,9 +23,6 @@ board it was written for.
 Targets are resolved as far as they can be without a board. Which light an
 `index` names is known only from the board, so it is resolved at the
 handshake and refused there if the board cannot honour it.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json
 import os

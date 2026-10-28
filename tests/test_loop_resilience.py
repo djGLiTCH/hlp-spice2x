@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: test_loop_resilience.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Test the run loop against a board that changes, is shared, or stops answering.
 
 The loop holds a claim on the board's lights for as long as the game runs. It
@@ -7,9 +15,6 @@ dropped it. None of that may end a working run. A board that leaves the bus
 is waited for, and the run starts again on it when it returns.
 
 Each run is on the board's clock, so a wait takes no real time.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import pytest
 from gp2040ce_hostlighting import protocol as hl

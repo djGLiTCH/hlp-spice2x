@@ -1,10 +1,15 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: stub_server.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """A stand-in Spice API server, so the bridge can be exercised without a game.
 
 Speaks the same wire format as spice2x: NUL-terminated JSON over TCP, with one
 RC4 keystream per connection when a password is set.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json
 import socket

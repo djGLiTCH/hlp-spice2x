@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: hardware_lights.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Walk a board through every way this bridge can light it, one phase at a time.
 
 A functional check to run by eye after changing anything that touches staging.
@@ -35,9 +43,6 @@ unacknowledged or refused frame, so a failure shows without watching the LEDs.
 Run it from the repository root:
 
     python -m tests.hardware_lights
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import logging
 import sys

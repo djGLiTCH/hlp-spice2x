@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: boards.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Boards for the tests, on gp2040ce-hostlighting's ModelBoard.
 
 ModelBoard answers as the firmware does and follows the protocol's timing,
@@ -10,9 +18,6 @@ that.
 The HELLO attributes, `drop`, `reject` and `hooks` are ModelBoard's.
 on_clock() runs the bridge and the library on the board's clock, so that a
 wait takes no real time.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 from types import SimpleNamespace
 

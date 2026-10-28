@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: bridge.py
+# Folder: hlp_spice2x
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """The poll, resolve and publish loop.
 
 Reads the game's lights from spice2x, turns them into a frame through the
@@ -9,9 +17,6 @@ republishing an identical frame.
 The host flow is gp2040ce-hostlighting's Session: the claim, the events, the
 configuration pages, the frames and the reconnect. This module resolves the
 profile against the board and decides what to stage.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import logging
 import time

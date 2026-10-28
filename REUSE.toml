@@ -1,0 +1,17 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: REUSE.toml
+# Folder: (repository root)
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
+version = 1
+SPDX-PackageName = "hlp-spice2x"
+SPDX-PackageSupplier = "Jacob Simpson <28767380+djGLiTCH@users.noreply.github.com>"
+SPDX-PackageDownloadLocation = "https://github.com/djGLiTCH/hlp-spice2x"
+
+[[annotations]]
+path = ["profiles/example.json"]
+SPDX-FileCopyrightText = "(C) 2026 Jacob Simpson (DJ GLiTCH)"
+SPDX-License-Identifier = "GPL-3.0-or-later"

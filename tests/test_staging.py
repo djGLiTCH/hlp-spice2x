@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: test_staging.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Test how a frame reaches the board's lights.
 
 A control name is staged by its action and a case, turbo or player light by
@@ -8,9 +16,6 @@ of these reach the same LED the order they are staged in decides the colour.
 Most of these assert on the frame the fake board ends up showing, LED by LED.
 The few that read the requests are about how a frame travels, which report is
 answered and which carries the commit.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import pytest
 from gp2040ce_hostlighting import protocol as hl

@@ -1,10 +1,15 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: test_cli.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Test the command line surface.
 
 These exercise the wiring between arguments and behaviour, which is otherwise
 only covered by running the tool by hand.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json
 

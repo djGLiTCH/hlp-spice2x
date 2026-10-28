@@ -1,11 +1,16 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: test_hardware_checks.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Test the hardware checks against the model board.
 
 The hardware checks are run by eye against a real board. Run against the model
 board they are held to the same wire as the bridge, so a check that sends
 something the protocol refuses fails here first.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json
 

@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: spiceapi.py
+# Folder: hlp_spice2x
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Minimal Spice API client.
 
 spice2x exposes the running game's state over a TCP service speaking
@@ -11,9 +19,6 @@ Two details of the wire format are taken from spice2x's reference C++ client:
   its reply's. Re-keying per message desynchronises after the first exchange.
 * The NUL terminator is part of the plaintext and is encrypted with it, so
   framing is found after decryption. Ciphertext contains NULs.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import json
 import socket

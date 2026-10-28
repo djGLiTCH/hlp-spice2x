@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: hardware_bridge.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Run the whole program against a board, with no game and no spice2x.
 
 The other checks drive one piece of the bridge. This one stands up a fake Spice
@@ -29,9 +37,6 @@ indexes. Raw LED ranges are not generated.
 Run it from the repository root:
 
     python -m tests.hardware_bridge
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import colorsys
 import json

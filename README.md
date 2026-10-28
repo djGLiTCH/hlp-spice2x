@@ -1,3 +1,13 @@
+<!--
+hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+Filename: README.md
+Folder: (repository root)
+https://github.com/djGLiTCH/hlp-spice2x
+SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+SPDX-License-Identifier: GPL-3.0-or-later
+See LICENSES/GPL-3.0-or-later.txt at the repository root.
+-->
+
 # hlp-spice2x
 
 hlp-spice2x drives the RGB LEDs of a [GP2040-CE][gp2040-ce] controller from
@@ -293,7 +303,9 @@ that needs action when upgrading.
 
 ## Licence
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+GPL-3.0-or-later, (C) 2026 Jacob Simpson. Each file carries its SPDX header,
+and `REUSE.toml` covers `profiles/example.json`, which cannot. The licence
+text is in [`LICENSES/`](LICENSES/GPL-3.0-or-later.txt).
 
 The protocol layer is [gp2040ce-hostlighting][hostlighting], a separate
 package, also GPL-3.0-or-later. `hlp_spice2x/hlp.py` holds the bridge's own

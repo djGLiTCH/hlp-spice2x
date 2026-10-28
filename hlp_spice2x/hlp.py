@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: hlp.py
+# Folder: hlp_spice2x
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """What the bridge needs of a GP2040-CE board's Host Lighting interface.
 
 The Host Lighting add-on exposes a vendor HID interface (usage page 0xFF47,
@@ -22,9 +30,6 @@ The bridge reads five pages:
 * page 10 (controls) lists every control with an action, lit or not. It is
   the only page that can say a control does not exist.
 * page 12 (lights) lists every light, with its LEDs, kind and owning action.
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 from gp2040ce_hostlighting import protocol as library
 from gp2040ce_hostlighting.cache import ConfigurationCache

@@ -1,3 +1,11 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: hardware_probe.py
+# Folder: tests
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
 """Print what an attached board reports about itself, as the bridge reads it.
 
 The first check to run against a new board, and the first to run when the
@@ -34,9 +42,6 @@ has. This prints the ones the bridge reads, as the bridge reads them.
 Run it from the repository root:
 
     python -m tests.hardware_probe
-
-SPDX-FileCopyrightText: (C) 2026 Jacob Simpson
-SPDX-License-Identifier: GPL-3.0-or-later
 """
 import sys
 
