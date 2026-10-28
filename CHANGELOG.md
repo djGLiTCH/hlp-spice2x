@@ -16,7 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
-## [Unreleased]
+## [0.6.0] - 2026-10-28
 
 This version speaks HLP v2.0 release candidate 10 (`HLP_v2.0-rc10`). It is a
 pre-release.
@@ -36,10 +36,10 @@ pre-release.
 - The bridge's messages, the README and `hardware_probe` name the Lights page
   as page 12.
 - Firmware and protocol links point at the `HLP_v2.0-rc10` tag.
-- Each file opens with gp2040ce-hostlighting's header: the project, the file
-  and its folder, the repository, the copyright and the licence. The licence
-  text moves to `LICENSES/GPL-3.0-or-later.txt`, and `REUSE.toml` covers the
-  example profile.
+- Each file opens with the header gp2040ce-hostlighting uses, naming the
+  project, the file and its folder, the repository, the copyright and the
+  licence. The licence moves to `LICENSES/GPL-3.0-or-later.txt` as the FSF's
+  plain text, and `REUSE.toml` covers the example profile.
 
 ## [0.5.0] - 2026-10-26
 
@@ -285,7 +285,7 @@ Host Lighting Protocol. Profiles name controls. The firmware resolves them
 against each board's own LED map, so one profile works across layouts.
 
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
-[Unreleased]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.5.0...HEAD
+[0.6.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.2.0...v0.3.0
