@@ -72,7 +72,7 @@ def test_no_board_points_at_the_firmware_builds(monkeypatch):
         hlp.open_device()
     message = str(caught.value)
     assert 'add-on enabled' in message
-    assert 'releases/tag/HLP_v2.0-rc9' in message
+    assert 'releases/tag/HLP_v2.0-rc10' in message
     assert 'another protocol major' not in message
 
 

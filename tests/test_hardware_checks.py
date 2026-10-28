@@ -70,7 +70,7 @@ def test_the_probe_with_no_board_says_where_to_get_firmware(monkeypatch, capsys)
     """Test that an empty enumeration fails and points at the firmware builds."""
     attach(monkeypatch)
     assert hardware_probe.main(['']) == 1
-    assert 'releases/tag/HLP_v2.0-rc9' in capsys.readouterr().out
+    assert 'releases/tag/HLP_v2.0-rc10' in capsys.readouterr().out
 
 
 def test_the_table_checks_hold_for_a_coherent_board():

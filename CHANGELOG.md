@@ -25,6 +25,7 @@ pre-release.
   with HLP v2.0 final.
 - The bridge's messages, the README and `hardware_probe` name the Lights page
   as page 12.
+- Firmware and protocol links point at the `HLP_v2.0-rc10` tag.
 
 ## [0.5.0] - 2026-10-26
 

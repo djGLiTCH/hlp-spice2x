@@ -39,7 +39,7 @@ from gp2040ce_hostlighting.protocol import (ADDRESSING_ACTION, ADDRESSING_KIND, 
 # The message for a run that finds no interface. The link names the firmware builds this release was built against.
 NO_INTERFACE = ("no Host Lighting interface found. Connect a board with the add-on enabled. "
                 "The add-on is not in an official GP2040-CE release yet. Test builds are at "
-                "https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc9")
+                "https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc10")
 # the message for an interface whose HELLO reply does not carry the protocol's magic
 NOT_HOST_LIGHTING = "handshake failed: this interface did not answer as a Host Lighting one"
 
