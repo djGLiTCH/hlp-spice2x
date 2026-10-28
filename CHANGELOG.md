@@ -38,8 +38,8 @@ pre-release.
 - Firmware and protocol links point at the `HLP_v2.0-rc10` tag.
 - Each file opens with the header gp2040ce-hostlighting uses, naming the
   project, the file and its folder, the repository, the copyright and the
-  licence. The licence moves to `LICENSES/GPL-3.0-or-later.txt` as the FSF's
-  plain text, and `REUSE.toml` covers the example profile.
+  licence. `LICENSE` and `LICENSES/GPL-3.0-or-later.txt` hold the FSF's plain
+  text of the licence, and `REUSE.toml` covers the example profile.
 
 ## [0.5.0] - 2026-10-26
 

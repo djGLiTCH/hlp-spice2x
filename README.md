@@ -305,7 +305,8 @@ that needs action when upgrading.
 
 GPL-3.0-or-later, (C) 2026 Jacob Simpson. Each file carries its SPDX header,
 and `REUSE.toml` covers `profiles/example.json`, which cannot. The licence
-text is in [`LICENSES/`](LICENSES/GPL-3.0-or-later.txt).
+text is in [LICENSE](LICENSE), and the same text is in
+[`LICENSES/`](LICENSES/GPL-3.0-or-later.txt) for REUSE.
 
 The protocol layer is [gp2040ce-hostlighting][hostlighting], a separate
 package, also GPL-3.0-or-later. `hlp_spice2x/hlp.py` holds the bridge's own

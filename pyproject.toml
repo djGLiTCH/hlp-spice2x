@@ -17,7 +17,7 @@ version = "0.6.0"
 description = "Drive a GP2040-CE board's LEDs from spice2x cabinet lighting"
 readme = "README.md"
 license = "GPL-3.0-or-later"
-license-files = ["LICENSES/*.txt"]
+license-files = ["LICENSE", "LICENSES/*.txt"]
 authors = [
     {name = "Jacob Simpson"},
 ]
