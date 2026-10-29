@@ -26,9 +26,10 @@ from .boards import M_ULTRA_CONTROLS, M_ULTRA_LIGHTS, Board, OneShotConnection
 T = hlp.CONTROL_TARGETS
 RED = (255, 0, 0)
 PROFILE = {'P1 Button 1': (('button', T['B1']), RED)}
-# HELLO as the protocol reference's worked example gives it, captured from a Haute42 COSMOX
+# HELLO as the protocol reference's worked example gives it, captured from a Haute42 COSMOX with
+# keyboard mapping changes off, as they are by default, so SET_KEYBOARD_MAPPING (0x34) is not listed
 HELLO = bytes.fromhex('81 41 00 47 50 48 4c 02 00 433031343539302E 10 7f'
-                      '3e 00 0f 00 03 00 1f 00 00 00 00 00 00 00 03 00 0f 3f 00 00 f3 00 07 00 01 00 00 00'
+                      '3e 00 0f 00 03 00 0f 00 00 00 00 00 00 00 03 00 0f 3f 00 00 f3 00 07 00 01 00 00 00'
                       ).ljust(64, b'\x00')
 
 
@@ -204,6 +205,15 @@ def test_a_board_without_an_identity_page_is_still_driven():
     board = Board(pages=HELLO_PAGES - {hl.PAGE_IDENTITY})
     assert 'board: ? (?)' in run_against(board)
     assert board.frames == [{4: RED}]
+
+
+@pytest.mark.parametrize('commands', [HELLO_COMMANDS, HELLO_COMMANDS - {hl.CMD_SET_KEYBOARD_MAPPING}])
+def test_keyboard_mapping_changes_are_neither_needed_nor_sent(commands):
+    """Test that a board is driven alike with keyboard mapping changes allowed and at its default, without them."""
+    board = Board(commands=commands)
+    assert 'streaming' in run_against(board)
+    assert board.frames == [{4: RED}]
+    assert not board.sent(hl.CMD_SET_KEYBOARD_MAPPING)
 
 
 @pytest.mark.parametrize('lacks', [{'events': HELLO_EVENTS - {0}},

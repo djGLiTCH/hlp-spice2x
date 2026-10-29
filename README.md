@@ -91,7 +91,7 @@ Host Lighting is a proposed add-on, open upstream as [PR #1691][pr-1691].
 Until it merges the board needs a test build. This version needs an HLP v2.0
 release candidate 10 build or a later 2.0 candidate. Release candidate 9 and
 earlier lay out the pages differently and are not driven. The test builds are
-published with each [release candidate][rc11].
+published with each [release candidate][rc12].
 
 There is a UF2 for every board GP2040-CE supports, with flashing and setup
 instructions. Enable the add-on in the web configurator once the board runs
@@ -322,6 +322,6 @@ part: the control names, what it requires of a board and its messages.
 [spice2x]: https://github.com/spice2x/spice2x.github.io
 [v0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.3.0
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
-[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc11/docs/host-lighting.md
+[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc12/docs/host-lighting.md
 [pr-1691]: https://github.com/OpenStickCommunity/GP2040-CE/pull/1691
-[rc11]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc11
+[rc12]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc12

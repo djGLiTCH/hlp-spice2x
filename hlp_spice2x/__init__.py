@@ -7,4 +7,4 @@
 # See LICENSES/GPL-3.0-or-later.txt at the repository root.
 
 """Bridge spice2x cabinet lighting onto a GP2040-CE board."""
-__version__ = '0.8.0'
+__version__ = '0.8.1'

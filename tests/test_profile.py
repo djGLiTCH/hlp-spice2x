@@ -187,7 +187,7 @@ def test_format_frame_names_controls(tmp_path):
 
 
 def test_each_control_name_carries_the_value_the_firmware_names_it_by():
-    """Test the bridge's values against the names HLP_v2.0-rc11's proto/enums.proto gives them."""
+    """Test the bridge's values against the names HLP_v2.0-rc12's proto/enums.proto gives them."""
     kinds = {1: 'Case', 2: 'Turbo', 3: 'Player1Light', 4: 'Player2Light', 5: 'Player3Light', 6: 'Player4Light'}
     for name, control in hlp.CONTROL_TARGETS.items():
         expected = FIRMWARE_ACTIONS if control[0] == ADDRESSING_ACTION else kinds

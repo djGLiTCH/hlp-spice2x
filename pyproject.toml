@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hlp-spice2x"
-version = "0.8.0"
+version = "0.8.1"
 description = "Drive a GP2040-CE board's LEDs from spice2x cabinet lighting"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -22,7 +22,7 @@ authors = [
     {name = "Jacob Simpson"},
 ]
 requires-python = ">=3.14"
-dependencies = ["gp2040ce-hostlighting @ git+https://github.com/djGLiTCH/gp2040ce-hostlighting@v1.0.0rc4"]
+dependencies = ["gp2040ce-hostlighting @ git+https://github.com/djGLiTCH/gp2040ce-hostlighting@v1.0.0rc5"]
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",

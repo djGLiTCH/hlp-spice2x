@@ -16,6 +16,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+This version speaks HLP v2.0 release candidate 12 (`HLP_v2.0-rc12`). It is a
+pre-release. Release candidate 12 adds a setting, "Allow hosts to change the
+keyboard mapping", off by default. While it is off, HELLO does not list
+`SET_KEYBOARD_MAPPING` (0x34). The bridge never sends 0x34, so a board is driven
+alike with the setting on or off.
+
+### Changed
+
+- gp2040ce-hostlighting 1.0.0rc5 knows the setting. pip installs it with the
+  bridge from its `v1.0.0rc5` tag on GitHub until 1.0.0 is on PyPI, with HLP
+  v2.0 final.
+- Firmware and protocol links point at the `HLP_v2.0-rc12` tag.
+
 ## [0.8.0] - 2026-10-29
 
 This version speaks HLP v2.0 release candidate 11 (`HLP_v2.0-rc11`). It is a

@@ -45,7 +45,7 @@ M_ULTRA_CONTROLS = [(2, 1), (3, 2), (4, 4), (5, 3), (6, 5), (7, 6), (8, 12), (9,
                     (11, 8), (12, 10), (13, 9), (14, 32), (16, 13), (17, 14), (18, 17), (19, 18),
                     (20, 15), (21, 16), (26, 17), (27, 1)]
 
-# The GpioAction names of HLP_v2.0-rc11's proto/enums.proto for the actions a
+# The GpioAction names of HLP_v2.0-rc12's proto/enums.proto for the actions a
 # profile can name, and turbo. A Board's page 3 gives these.
 FIRMWARE_ACTIONS = {1: 'BUTTON_PRESS_UP', 2: 'BUTTON_PRESS_DOWN', 3: 'BUTTON_PRESS_LEFT', 4: 'BUTTON_PRESS_RIGHT',
                     5: 'BUTTON_PRESS_B1', 6: 'BUTTON_PRESS_B2', 7: 'BUTTON_PRESS_B3', 8: 'BUTTON_PRESS_B4',

@@ -16,7 +16,7 @@ import json
 
 import pytest
 from gp2040ce_hostlighting import protocol as hl
-from gp2040ce_hostlighting.testing import HELLO_PAGES, attach, control_record, summary_record
+from gp2040ce_hostlighting.testing import HELLO_COMMANDS, HELLO_PAGES, attach, control_record, summary_record
 
 from hlp_spice2x import hlp
 from hlp_spice2x import profile as profile_module
@@ -92,6 +92,21 @@ def test_the_probe_names_page_3_as_missing_on_a_board_without_it(monkeypatch, ca
     assert board.closed
 
 
+def test_the_checks_pass_a_board_without_keyboard_mapping_changes(monkeypatch, capsys):
+    """Test the probe and the lights check against a board at its default, which does not list SET_KEYBOARD_MAPPING."""
+    commands = HELLO_COMMANDS - {hl.CMD_SET_KEYBOARD_MAPPING}
+    attach(monkeypatch, m_ultra(commands=commands))
+    assert hardware_probe.main(['']) == 0
+    out = capsys.readouterr().out
+    assert 'the bridge needs     nothing this board lacks' in out and '0x34' not in out
+    board = m_ultra(commands=commands)
+    attach(monkeypatch, board)
+    lights_check_on_clock(monkeypatch, board)
+    assert hardware_lights.main(['']) == 0
+    assert '0 protocol-level failure(s)' in capsys.readouterr().out
+    assert not board.sent(hl.CMD_SET_KEYBOARD_MAPPING)
+
+
 @pytest.mark.parametrize('kind, names, name', [(hl.KIND_CASE, {'LightType': {1: 'Case'}}, 'CASE'),
                                                (hl.KIND_BUTTON, {'LightType': {0: 'ActionButton'}}, 'button'),
                                                (7, {'LightType': {7: 'NewLight'}}, 'NewLight'),
@@ -116,7 +131,7 @@ def test_the_probe_with_no_board_says_where_to_get_firmware(monkeypatch, capsys)
     """Test that an empty enumeration fails and points at the firmware builds."""
     attach(monkeypatch)
     assert hardware_probe.main(['']) == 1
-    assert 'releases/tag/HLP_v2.0-rc11' in capsys.readouterr().out
+    assert 'releases/tag/HLP_v2.0-rc12' in capsys.readouterr().out
 
 
 def test_the_table_checks_hold_for_a_coherent_board():
