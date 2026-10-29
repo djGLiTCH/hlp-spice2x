@@ -124,7 +124,7 @@ The bridge prints what it read at startup. This example is from a Haute42
 COSMOX M Ultra:
 
 ```
-board: Haute42|COSMOX M Ultra (v0.7.12-159-g7487dae)
+board: Haute42|COSMOX M Ultra (v0.7.12-157-gd107d9e)
 board speaks HLP v2.0: 46 lights on 46 LEDs, renders at 40 Hz, GRB chain (white channel: no), state changes by event
 takeover: whole frame, 2000 ms keepalive, applying board brightness
 controls the board gives more than one light, all of which will be lit: L3, Up
@@ -185,7 +185,7 @@ The run reports what it read from the board, warns about anything in the
 profile this board cannot light, and prints a summary when it stops:
 
 ```
-1186 frames in 29.7s (40.0/s published), 0 frames unacknowledged
+1182 frames in 29.6s (40.0/s published), 0 frames unacknowledged
 claim given up, on-board animations restored
 ```
 
