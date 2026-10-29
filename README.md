@@ -183,7 +183,8 @@ configurator reboots it, the bridge reports it and waits. When the board
 returns, the bridge starts again on it.
 
 The run reports what it read from the board, warns about anything in the
-profile this board cannot light, and prints a summary when it stops:
+profile this board cannot light, names any profile light the game does not
+have, and prints a summary when it stops:
 
 ```
 1182 frames in 29.6s (40.0/s published), 0 frames unacknowledged

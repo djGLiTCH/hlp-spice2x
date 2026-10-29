@@ -401,6 +401,15 @@ def test_lights_the_profile_does_not_map_are_named_once():
     assert text.count('2 light(s) not in the profile, ignoring: Neon, Spot') == 1
 
 
+def test_profile_lights_the_game_does_not_have_are_named_once_from_the_first_read_that_lists_any():
+    """Test that profile entries the game never lists are reported once, after a read that lists no light."""
+    board = Board()
+    profile = dict(PROFILE, **{'P1 Buton 1': (('button', T['B1']), RED)})
+    text = run_with(board, {}, ON, ON, profile=profile)
+    assert text.count("1 profile light(s) this game does not have, which light nothing: P1 Buton 1") == 1
+    assert 'not in the profile' not in text
+
+
 def test_a_frame_is_only_sent_when_the_game_changes_something():
     """Test that identical polls publish one frame and a changed one publishes another."""
     board = Board()

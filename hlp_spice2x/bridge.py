@@ -515,11 +515,17 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
 
         while True:
             states = connection.lights_read()
-            if not reported_unmapped:
+            # The game lists every light it has on each read, so the first read that lists any shows
+            # which profile entries name no light of this game.
+            if not reported_unmapped and states:
                 missing = sorted(set(states) - set(profile))
                 if missing:
                     report(f"{len(missing)} light(s) not in the profile, ignoring: "
                            f"{', '.join(missing[:6])}{' ...' if len(missing) > 6 else ''}")
+                unknown = sorted(set(profile) - set(states))
+                if unknown:
+                    report(f"{len(unknown)} profile light(s) this game does not have, which light nothing: "
+                           f"{', '.join(unknown[:6])}{' ...' if len(unknown) > 6 else ''}")
                 reported_unmapped = True
 
             frame = profile_module.resolve_frame(states, active)

@@ -26,6 +26,8 @@ pre-release.
 - A profile's `button` can be any name the board's page 3 gives an action or a
   kind of light, such as `BUTTON_PRESS_TURBO`. A button, action or light a
   later GP2040-CE firmware adds can be mapped without a new bridge.
+- The first read of the game's lights names any profile light the game does
+  not have, such as a misspelt one, which lights nothing.
 - A dry run names each control name that is not a short name, since only a
   board's page 3 can check it.
 - `hardware_probe` lists any short name the board's firmware does not have.
