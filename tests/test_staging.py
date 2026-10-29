@@ -19,7 +19,7 @@ answered and which carries the commit.
 """
 import pytest
 from gp2040ce_hostlighting import protocol as hl
-from gp2040ce_hostlighting.testing import HELLO_PIXEL_FORMATS
+from gp2040ce_hostlighting.testing import HELLO_ADDRESSING_MODES, HELLO_PAGES, HELLO_PIXEL_FORMATS
 
 from hlp_spice2x import bridge, hlp
 from hlp_spice2x import profile as profile_module
@@ -336,6 +336,104 @@ def test_startup_names_controls_the_board_lacks_or_cannot_light():
     text = run_against(m_ultra(), profile)
     assert '2 mapped control(s) are not on this board: A3, E1' in text
     assert '2 mapped control(s) have no LED on this board: S1, PLED1' in text
+
+
+def test_a_short_name_is_staged_by_the_value_the_boards_firmware_gives_it():
+    """Test that B1 follows page 3 to its firmware's value, here B2's, so its light is B2's."""
+    board = m_ultra()
+    board.rename(hl.NAMES_GPIO_ACTION, 5, 'BUTTON_PRESS_B2')
+    board.rename(hl.NAMES_GPIO_ACTION, 6, 'BUTTON_PRESS_B1')
+    run_against(board, {'b1': (('button', B1), RED)})
+    assert board.frames == [{9: RED}]
+
+
+def test_a_kind_is_staged_by_the_value_the_boards_firmware_gives_it():
+    """Test that CASE follows page 3 to its firmware's LightType value."""
+    board = Board(lights=[('B1', 0), ('PLED1', 1, 4)])
+    board.rename(hl.NAMES_LIGHT_TYPE, 3, 'Case')
+    run_against(board, {'case': (('button', CASE), RED)})
+    assert board.frames == [{1: RED, 2: RED, 3: RED, 4: RED}]
+
+
+def test_a_control_the_firmware_has_no_name_for_is_reported_and_lights_nothing():
+    """Test that a short name page 3 does not list warns, and the rest of the profile still lights."""
+    board = m_ultra()
+    board.rename(hl.NAMES_GPIO_ACTION, 5)
+    text = run_against(board, {'b1': (('button', B1), RED), 'b2': (('button', T['B2']), GREEN),
+                               'new': (('button', (hlp.FIRMWARE, 'BUTTON_PRESS_E13')), BLUE)})
+    assert ("warning: 2 mapped control(s) are not in this board's firmware and light nothing: "
+            "B1 (BUTTON_PRESS_B1), BUTTON_PRESS_E13") in text
+    assert board.frames == [{9: GREEN}]
+
+
+def test_a_control_only_page_3_names_is_lit_from_a_loaded_profile(tmp_path):
+    """Test that a profile can name an action the bridge has no short name for, by its firmware name."""
+    board = Board(lights=[('B1', 0), ((hl.ADDRESSING_ACTION, 60), 1)])
+    board.rename(hl.NAMES_GPIO_ACTION, 60, 'BUTTON_PRESS_E13')
+    path = tmp_path / 'profile.json'
+    path.write_text('{"lights": {"New": {"button": "button_press_e13", "colour": "FF0000"}}}', encoding='utf-8')
+    profile, _ = profile_module.load(str(path))
+    text = run_against(board, profile)
+    assert board.frames == [{1: RED}]
+    assert 'warning' not in text
+
+
+def test_page_3_is_read_before_the_claim():
+    """Test that the slow page 3 walk is over before the claim, so the claim cannot lapse before its renewal."""
+    board = m_ultra()
+    run_against(board, {'b1': (('button', B1), RED)})
+    order = [(request[0], request[3]) for request in board.requests]
+    last_names = max(n for n, step in enumerate(order) if step == (hl.CMD_GET_PAGE, hl.PAGE_NAMES))
+    assert last_names < order.index(next(step for step in order if step[0] == hl.CMD_CLAIM))
+
+
+def test_a_short_name_and_its_firmware_name_light_one_control_together():
+    """Test that B1 and BUTTON_PRESS_B1 resolve to one control, and their colours add as two entries on it do."""
+    board = m_ultra()
+    run_against(board, {'a': (('button', B1), RED),
+                        'b': (('button', (hlp.FIRMWARE, 'BUTTON_PRESS_B1')), GREEN)})
+    assert board.frames == [{8: (255, 255, 0)}]
+
+
+def test_an_index_into_a_control_only_page_3_names_lights_that_one_light():
+    """Test an index entry whose control is a firmware name, from the profile to the LED."""
+    board = Board(lights=[((hl.ADDRESSING_ACTION, 60), 0), ((hl.ADDRESSING_ACTION, 60), 1)])
+    board.rename(hl.NAMES_GPIO_ACTION, 60, 'BUTTON_PRESS_E13')
+    run_against(board, {'new': (('light', (hlp.FIRMWARE, 'BUTTON_PRESS_E13'), 1), RED)})
+    assert board.frames == [{1: RED}]
+
+
+def test_a_kind_only_page_3_names_needs_kind_addressing_and_hands_the_lights_back():
+    """Test that the addressing a resolved name needs is checked after resolving, and the claim is given up."""
+    board = Board(lights=[('B1', 0), ('PLED1', 1)], addressing_modes=HELLO_ADDRESSING_MODES - {hl.ADDRESSING_KIND})
+    with pytest.raises(hl.HostLightingIncompatibleError, match='addressing mode 7'):
+        run_against(board, {'p1': (('button', (hlp.FIRMWARE, 'PLAYER1LIGHT')), RED)})
+    assert board.holder_token == 0 and not board.frames
+
+
+def test_a_dry_run_names_the_controls_only_a_board_can_check():
+    """Test that a dry run says which control names it cannot check, so a misspelt one is not passed silently."""
+    profile = {'a': (('button', B1), RED), 'b': (('button', (hlp.FIRMWARE, 'BL')), RED),
+               'c': (('light', (hlp.FIRMWARE, 'BUTTON_PRESS_E13'), 0), RED)}
+    lines = []
+    bridge.run(OneShotConnection({'a': 1.0}), profile, report=lines.append)
+    assert "2 control name(s) are not short names, which only a board's page 3 can check: BL, BUTTON_PRESS_E13" in lines
+
+
+def test_a_dry_run_shows_a_control_only_page_3_names_by_that_name():
+    """Test that with no board a firmware name is kept as written and shown by it."""
+    profile = {'new': (('button', (hlp.FIRMWARE, 'BUTTON_PRESS_E13')), RED)}
+    lines = []
+    bridge.run(OneShotConnection({'new': 1.0}), profile, report=lines.append)
+    assert 'frame: BUTTON_PRESS_E13=#FF0000' in lines
+
+
+def test_a_board_without_page_3_is_refused_before_anything_is_claimed():
+    """Test that a board that does not list page 3 is refused, so no value is taken on trust."""
+    board = m_ultra(pages=HELLO_PAGES - {hl.PAGE_NAMES})
+    with pytest.raises(hl.HostLightingIncompatibleError, match='page 3'):
+        run_against(board, {'b1': (('button', B1), RED)})
+    assert not board.sent(hl.CMD_CLAIM) and not board.frames
 
 
 def test_startup_says_which_controls_have_more_than_one_light():

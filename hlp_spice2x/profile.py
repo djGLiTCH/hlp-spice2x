@@ -20,9 +20,14 @@ counting as the board's Lights page lists them, and is tied to that board's
 configuration. A `range` entry addresses raw LED indexes and is tied to the
 board it was written for.
 
-Targets are resolved as far as they can be without a board. Which light an
-`index` names is known only from the board, so it is resolved at the
-handshake and refused there if the board cannot honour it.
+A control is a short name the bridge knows, such as B1, or any name the
+board's page 3 gives an action or kind of light, such as BUTTON_PRESS_TURBO.
+Loading keeps a short name at the value proto/enums.proto gives it, and any
+other name as it is. resolve() looks each one up on the board's page 3, so
+the value staged is the one the board's own firmware gives it.
+
+Which light an `index` names is known only from the board, so it is resolved
+at the handshake and refused there if the board cannot honour it.
 """
 import json
 import os
@@ -33,6 +38,8 @@ from . import hlp
 HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
 # the highest LED index a range can name on the wire
 MAX_LED_INDEX = 0xFFFF
+# the longest name page 3 gives an action or kind of light
+NAME_BYTES = 40
 
 
 class ProfileError(ValueError):
@@ -61,15 +68,15 @@ def parse_colour(name: str, colour) -> tuple:
 
 
 def load(path: str) -> tuple:
-    """Load a profile and resolve its control names to protocol targets.
+    """Load a profile and turn its control names into protocol targets.
 
     :param path: path to the profile JSON
     :return: (profile, warnings), where profile maps a light name to
         (target, colour) with target being ('button', control), ('light',
         control, index) or ('range', start, count), control the (addressing,
-        address) the protocol stages it by, and colour (r, g, b) or
-        (r, g, b, w), and warnings is a list of non-fatal complaints about
-        entries that were skipped
+        address) a short name stands for or (hlp.FIRMWARE, name) for any other
+        name, and colour (r, g, b) or (r, g, b, w), and warnings is a list of
+        non-fatal complaints about entries that were skipped
     """
     with open(path, encoding='utf-8') as handle:
         profile = json.load(handle)
@@ -108,10 +115,11 @@ def load(path: str) -> tuple:
                                    f"LED indexes 0-{MAX_LED_INDEX}")
             resolved[name] = (('range', start, count), rgb)
         else:
-            control = str(entry['button']).upper()
-            target = hlp.CONTROL_TARGETS.get(control)
-            if target is None:
-                raise ProfileError(f"light '{name}': unknown control '{entry['button']}'")
+            control = str(entry['button']).strip().upper()
+            if not control or len(control) > NAME_BYTES or not control.isascii() or not control.isprintable():
+                raise ProfileError(f"light '{name}': control '{entry['button']}' is not a name a board can "
+                                   f"give, which is printable ASCII of up to {NAME_BYTES} bytes")
+            target = hlp.CONTROL_TARGETS.get(control, (hlp.FIRMWARE, control))
             if 'index' in entry:
                 try:
                     index = int(entry['index'])
@@ -127,6 +135,30 @@ def load(path: str) -> tuple:
     if not resolved:
         raise ProfileError(f"{path} has no mapped lights. Fill in the 'button' fields first")
     return resolved, warnings
+
+
+def resolve(profile: dict, names: dict) -> tuple:
+    """Resolve each control a profile names to the value a board's firmware gives it.
+
+    :param profile: a loaded profile
+    :param names: the board's page 3 names, as read_names() returns them
+    :return: (the profile with each control at the board's value and the entries
+        whose control the firmware has no name for left out, the controls left out)
+    """
+    index = hlp.name_index(names)
+    resolved = {}
+    missing = []
+    for name, (target, colour) in profile.items():
+        if target[0] == 'range':
+            resolved[name] = (target, colour)
+            continue
+        control = hlp.resolve_control(target[1], index)
+        if control is None:
+            if target[1] not in missing:
+                missing.append(target[1])
+            continue
+        resolved[name] = ((target[0], control) + target[2:], colour)
+    return resolved, missing
 
 
 def write_skeleton(path: str, names) -> None:

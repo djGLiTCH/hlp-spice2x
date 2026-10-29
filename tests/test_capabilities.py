@@ -89,11 +89,11 @@ def test_the_white_channel_is_the_summarys_flag(colour_format, flag, white):
 
 
 def test_only_the_groups_the_bridge_uses_are_asked_for():
-    """Test that every page read names its field groups."""
+    """Test that every page the bridge keeps names its field groups. Page 3 is the library's read_names()."""
     board = Board()
     hlp.negotiate(board.open())
     masks = {(request[3], int.from_bytes(request[10:12], 'little'))
-             for request in board.sent(hl.CMD_GET_PAGE)}
+             for request in board.sent(hl.CMD_GET_PAGE) if request[3] != hl.PAGE_NAMES}
     assert masks == {(hl.PAGE_SUMMARY, 0x03), (hl.PAGE_LIGHTS, 0x07), (hl.PAGE_CONTROLS, 0x01)}
 
 
@@ -160,6 +160,7 @@ def test_something_that_is_not_a_host_lighting_interface_is_reported_as_such():
     ({'request_flags': HELLO_REQUEST_FLAGS - {2}}, 'request flag bit 2'),
     ({'request_flags': HELLO_REQUEST_FLAGS - {4, 5, 6}},
      'request flag bit 4, request flag bit 5, request flag bit 6'),
+    ({'pages': HELLO_PAGES - {hl.PAGE_NAMES}}, 'page 3'),
     ({'pages': HELLO_PAGES - {hl.PAGE_SUMMARY}}, 'page 8'),
     ({'pages': HELLO_PAGES - {hl.PAGE_LIGHTS}}, 'page 12'),
     ({'pixel_formats': HELLO_PIXEL_FORMATS - {0}}, 'pixel format 0'),

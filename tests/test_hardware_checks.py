@@ -16,7 +16,7 @@ import json
 
 import pytest
 from gp2040ce_hostlighting import protocol as hl
-from gp2040ce_hostlighting.testing import HELLO_PAGES, attach, control_record, name_record, summary_record
+from gp2040ce_hostlighting.testing import HELLO_PAGES, attach, control_record, summary_record
 
 from hlp_spice2x import hlp
 from hlp_spice2x import profile as profile_module
@@ -54,34 +54,42 @@ def test_the_probe_prints_a_board_and_finds_it_coherent(monkeypatch, capsys):
     assert 'controls             21 (16 lit, 5 unlit)' in out
     assert 'Up         x2   #3@LED3+1 on GP2, #12@LED12+1 on GP27   <-- more than one light' in out
     assert 'CASE       x30' in out
-    assert 'GP14   action 32   ACTION_32  unlit' in out
+    assert 'GP14   action 32   BUTTON_PRESS_TURBO unlit' in out
     assert 'GP27   action 1    Up         lit (duplicate)' in out
+    assert 'short names          38 of 38 on this firmware' in out
     assert out.count('coherent') == 3 and 'MISMATCH' not in out
     assert {request[0] for request in board.requests} == {hl.CMD_HELLO, hl.CMD_GET_PAGE}
     assert board.closed
 
 
-def test_the_probe_names_an_action_no_profile_can_name_by_the_firmwares_name(monkeypatch, capsys):
-    """Test that page 3 names an action the profiles have no name for, and a profile's name comes first."""
+def test_the_probe_shows_an_action_page_3_does_not_name_by_its_value(monkeypatch, capsys):
+    """Test that an action with no page 3 record and no profile name is shown by its value."""
     board = m_ultra()
-    board.names = [name_record(hl.NAMES_GPIO_ACTION, 32, 'BUTTON_PRESS_TURBO'),
-                   name_record(hl.NAMES_GPIO_ACTION, 1, 'BUTTON_PRESS_UP')]
+    board.rename(hl.NAMES_GPIO_ACTION, 32)
+    attach(monkeypatch, board)
+    assert hardware_probe.main(['']) == 0
+    assert 'GP14   action 32   action 32  unlit' in capsys.readouterr().out
+
+
+def test_the_probe_names_each_value_as_the_boards_firmware_does(monkeypatch, capsys):
+    """Test that a value page 3 names otherwise is shown by that name, and the short name it lacks is listed."""
+    board = m_ultra()
+    board.rename(hl.NAMES_GPIO_ACTION, 5, 'BUTTON_PRESS_B9')
     attach(monkeypatch, board)
     assert hardware_probe.main(['']) == 0
     out = capsys.readouterr().out
-    assert 'page 3, names: 2 action(s), 0 light kind(s)' in out
-    assert 'GP14   action 32   BUTTON_PRESS_TURBO unlit' in out
-    assert 'GP2    action 1    Up         lit (duplicate)' in out
+    assert 'short names          37 of 38 on this firmware, not B1' in out
+    assert 'GP6    action 5    BUTTON_PRESS_B9 lit' in out
 
 
-def test_the_probe_names_actions_by_value_on_a_board_without_page_3(monkeypatch, capsys):
-    """Test that a board that does not list page 3 is probed as before, its unnamed actions by value."""
+def test_the_probe_names_page_3_as_missing_on_a_board_without_it(monkeypatch, capsys):
+    """Test that a board that does not list page 3 is shown as lacking it, then refused as the bridge refuses it."""
     board = m_ultra(pages=HELLO_PAGES - {hl.PAGE_NAMES})
     attach(monkeypatch, board)
-    assert hardware_probe.main(['']) == 0
-    out = capsys.readouterr().out
-    assert 'page 3' not in out
-    assert 'GP14   action 32   action 32  unlit' in out
+    with pytest.raises(hl.HostLightingIncompatibleError, match='page 3'):
+        hardware_probe.main([''])
+    assert 'the bridge needs     page 3' in capsys.readouterr().out
+    assert board.closed
 
 
 @pytest.mark.parametrize('kind, names, name', [(hl.KIND_CASE, {'LightType': {1: 'Case'}}, 'CASE'),
@@ -149,6 +157,17 @@ def test_a_controls_key_is_named_by_its_source(key, name):
     assert hardware_probe.key_name(key) == name
 
 
+def test_the_lights_check_names_each_control_as_the_boards_firmware_does(monkeypatch, capsys):
+    """Test that a phase names a control by page 3, so it names the control it lights."""
+    board = m_ultra()
+    board.rename(hl.NAMES_GPIO_ACTION, 3, 'BUTTON_PRESS_E13')
+    attach(monkeypatch, board)
+    lights_check_on_clock(monkeypatch, board)
+    assert hardware_lights.main(['']) == 0
+    out = capsys.readouterr().out
+    assert '  BUTTON_PRESS_E13\n' in out and '  Left\n' not in out
+
+
 def test_the_lights_check_runs_every_phase_and_hands_the_lights_back(monkeypatch, capsys):
     """Test the lights check end to end against the reference board, on a clock that does not wait."""
     board = m_ultra()
@@ -212,7 +231,7 @@ def test_the_end_to_end_check_writes_a_profile_the_bridge_can_load(monkeypatch, 
     """Test that the generated profile names this board's controls and loads cleanly."""
     attach(monkeypatch, m_ultra())
     monkeypatch.setattr(hardware_bridge, 'PROFILE_PATH', tmp_path / 'profile.json')
-    chase, strip, strip_lights, multi = hardware_bridge.describe_board('')
+    chase, strip, strip_lights, multi, _ = hardware_bridge.describe_board('')
     assert len(chase) == 14 and (strip, strip_lights) == (T['CASE'], 30)
     assert multi == T['UP']
     lights, strip_names = hardware_bridge.build_profile(chase, strip, strip_lights, multi)

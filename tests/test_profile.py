@@ -16,6 +16,8 @@ from gp2040ce_hostlighting.protocol import ADDRESSING_ACTION, ADDRESSING_KIND
 from hlp_spice2x import hlp
 from hlp_spice2x import profile as profile_module
 
+from .boards import FIRMWARE_ACTIONS
+
 
 def write(tmp_path, lights):
     """Write a profile file and return its path."""
@@ -69,11 +71,42 @@ def test_missing_keys_warn(tmp_path):
     assert any('Typo' in w for w in warnings)
 
 
-def test_unknown_control_is_rejected(tmp_path):
-    """Test that a bad control name fails loudly."""
-    path = write(tmp_path, {'A': {'button': 'NOPE'}})
-    with pytest.raises(profile_module.ProfileError, match='NOPE'):
+def test_a_name_the_bridge_has_no_value_for_is_kept_for_the_boards_page_3(tmp_path):
+    """Test that any other control name is kept as written, in upper case, to be resolved on a board."""
+    path = write(tmp_path, {'A': {'button': ' button_press_e13 '}, 'B': {'button': 'Turbo', 'index': 1}})
+    profile, _ = profile_module.load(path)
+    assert profile['A'][0] == ('button', (hlp.FIRMWARE, 'BUTTON_PRESS_E13'))
+    assert profile['B'][0] == ('light', (ADDRESSING_KIND, 2), 1)
+
+
+@pytest.mark.parametrize('control', ['B' * 41, 'B\u00e91', 'B\t1'])
+def test_a_control_name_no_board_can_give_is_rejected(tmp_path, control):
+    """Test that a name longer than page 3's 40 bytes, or not printable ASCII, fails loudly."""
+    path = write(tmp_path, {'A': {'button': control}})
+    with pytest.raises(profile_module.ProfileError, match='printable ASCII of up to 40 bytes'):
         profile_module.load(path)
+
+
+def test_a_short_name_is_looked_up_only_among_its_own_kind_of_value():
+    """Test that an action named CASE leaves the short name CASE on the kind, and a firmware name takes the action."""
+    index = hlp.name_index({'GpioAction': {99: 'CASE'}, 'LightType': {1: 'Case'}})
+    assert hlp.resolve_control(hlp.CONTROL_TARGETS['CASE'], index) == (ADDRESSING_KIND, 1)
+    assert hlp.resolve_control((hlp.FIRMWARE, 'CASE'), index) == (ADDRESSING_ACTION, 99)
+    assert hlp.resolve_control((hlp.FIRMWARE, 'PLAYER2LIGHT'), index) is None
+
+
+def test_resolving_against_page_3_takes_each_value_from_the_board():
+    """Test resolve(): short and firmware names by page 3's value, ranges as written, the rest left out."""
+    profile = {'a': (('button', hlp.CONTROL_TARGETS['B1']), (1, 2, 3)),
+               'b': (('light', (hlp.FIRMWARE, 'PLAYER1LIGHT'), 0), (1, 2, 3)),
+               'c': (('range', 16, 4), (1, 2, 3)),
+               'd': (('button', hlp.CONTROL_TARGETS['B2']), (1, 2, 3))}
+    names = {'GpioAction': {7: 'BUTTON_PRESS_B1'}, 'LightType': {3: 'Player1Light'}}
+    resolved, missing = profile_module.resolve(profile, names)
+    assert resolved == {'a': (('button', (ADDRESSING_ACTION, 7)), (1, 2, 3)),
+                        'b': (('light', (ADDRESSING_KIND, 3), 0), (1, 2, 3)),
+                        'c': (('range', 16, 4), (1, 2, 3))}
+    assert missing == [hlp.CONTROL_TARGETS['B2']]
 
 
 def test_range_past_the_wire_is_rejected(tmp_path):
@@ -151,6 +184,15 @@ def test_format_frame_names_controls(tmp_path):
     text = profile_module.format_frame(profile_module.resolve_frame({'A': 1.0, 'B': 1.0}, profile))
     assert 'S2=#FFAA00' in text
     assert 'range@16+4=#112233' in text
+
+
+def test_each_control_name_carries_the_value_the_firmware_names_it_by():
+    """Test the bridge's values against the names HLP_v2.0-rc11's proto/enums.proto gives them."""
+    kinds = {1: 'Case', 2: 'Turbo', 3: 'Player1Light', 4: 'Player2Light', 5: 'Player3Light', 6: 'Player4Light'}
+    for name, control in hlp.CONTROL_TARGETS.items():
+        expected = FIRMWARE_ACTIONS if control[0] == ADDRESSING_ACTION else kinds
+        assert hlp.FIRMWARE_NAMES[control] == expected[control[1]], name
+    assert set(hlp.FIRMWARE_NAMES) == set(hlp.CONTROL_TARGETS.values())
 
 
 def test_non_object_entry_is_rejected(tmp_path):

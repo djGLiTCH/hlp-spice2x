@@ -19,11 +19,14 @@ The HELLO attributes, `drop`, `reject` and `hooks` are ModelBoard's.
 on_clock() runs the bridge and the library on the board's clock, so that a
 wait takes no real time.
 """
+import struct
 from types import SimpleNamespace
 
 from gp2040ce_hostlighting import claim, protocol, session
-from gp2040ce_hostlighting.protocol import ACTION_NONE, ADDRESSING_ACTION, ADDRESSING_KIND, KIND_BUTTON, PIN_NONE
-from gp2040ce_hostlighting.testing import ModelBoard, control_record, fake_device, light_record, summary_record
+from gp2040ce_hostlighting.protocol import (ACTION_NONE, ADDRESSING_ACTION, ADDRESSING_KIND, KIND_BUTTON,
+                                            NAMES_GPIO_ACTION, PIN_NONE)
+from gp2040ce_hostlighting.testing import (ModelBoard, control_record, fake_device, light_record, name_record,
+                                           summary_record)
 
 from hlp_spice2x import bridge, hlp
 
@@ -41,6 +44,16 @@ M_ULTRA_LIGHTS = [('Left', 0), ('Down', 1), ('Right', 2), ('Up', 3), ('B3', 4), 
 M_ULTRA_CONTROLS = [(2, 1), (3, 2), (4, 4), (5, 3), (6, 5), (7, 6), (8, 12), (9, 11), (10, 7),
                     (11, 8), (12, 10), (13, 9), (14, 32), (16, 13), (17, 14), (18, 17), (19, 18),
                     (20, 15), (21, 16), (26, 17), (27, 1)]
+
+# The GpioAction names of HLP_v2.0-rc11's proto/enums.proto for the actions a
+# profile can name, and turbo. A Board's page 3 gives these.
+FIRMWARE_ACTIONS = {1: 'BUTTON_PRESS_UP', 2: 'BUTTON_PRESS_DOWN', 3: 'BUTTON_PRESS_LEFT', 4: 'BUTTON_PRESS_RIGHT',
+                    5: 'BUTTON_PRESS_B1', 6: 'BUTTON_PRESS_B2', 7: 'BUTTON_PRESS_B3', 8: 'BUTTON_PRESS_B4',
+                    9: 'BUTTON_PRESS_L1', 10: 'BUTTON_PRESS_R1', 11: 'BUTTON_PRESS_L2', 12: 'BUTTON_PRESS_R2',
+                    13: 'BUTTON_PRESS_S1', 14: 'BUTTON_PRESS_S2', 15: 'BUTTON_PRESS_A1', 16: 'BUTTON_PRESS_A2',
+                    17: 'BUTTON_PRESS_L3', 18: 'BUTTON_PRESS_R3', 32: 'BUTTON_PRESS_TURBO', 41: 'BUTTON_PRESS_A3',
+                    42: 'BUTTON_PRESS_A4'}
+FIRMWARE_ACTIONS.update({43 + n: f'BUTTON_PRESS_E{n + 1}' for n in range(12)})
 
 # A board with one light per control and no duplicates, for tests that do not
 # care about the shape of the hardware.
@@ -104,6 +117,11 @@ class OneShotConnection(ScriptedConnection):
         super().__init__(states or {})
 
 
+def control_of(name) -> tuple:
+    """Give the (addressing, value) a light's name stands for: a short name, or the pair itself."""
+    return tuple(name) if isinstance(name, tuple) else hlp.CONTROL_TARGETS[name.upper()]
+
+
 class Board(ModelBoard):
     """A ModelBoard wired from lights and controls named as a profile names them."""
 
@@ -113,8 +131,9 @@ class Board(ModelBoard):
         """Describe the board and what its firmware offers.
 
         :param lights: the board's lights in ordinal order, as (name, first LED)
-            or (name, first LED, LED count), the name a profile control name:
-            a control for a button light, or CASE, TURBO or PLED1-4
+            or (name, first LED, LED count), the name a short control name, a
+            control for a button light or CASE, TURBO or PLED1-4, or an
+            (addressing, value) pair for one the bridge has no short name for
         :param controls: the board's inputs as (key, action), defaulting to one
             GPIO pin per control that owns a light
         :param colour_format: the Summary colour format
@@ -164,7 +183,7 @@ class Board(ModelBoard):
             # one GPIO pin per control that owns a light, from GP2 up
             actions = []
             for name, _, _ in wired:
-                target = hlp.CONTROL_TARGETS[name.upper()]
+                target = control_of(name)
                 if target[0] == ADDRESSING_ACTION and target[1] not in actions:
                     actions.append(target[1])
             controls = [(2 + n, action) for n, action in enumerate(actions)]
@@ -172,7 +191,7 @@ class Board(ModelBoard):
         self.light_wiring = []
         used = {}
         for name, first, count in wired:
-            addressing, value = hlp.CONTROL_TARGETS[name.upper()]
+            addressing, value = control_of(name)
             light = {'first': first, 'count': count, 'kind': KIND_BUTTON, 'action': None, 'pin': None}
             if addressing == ADDRESSING_KIND:
                 light['kind'] = value
@@ -196,6 +215,22 @@ class Board(ModelBoard):
         self.controls = [control_record(key, action, duplicated=int(self._actions().count(action) > 1),
                                         lit=int(self._lit(key)), light_count=int(self._lit(key)))
                          for key, action in self.wiring]
+
+    def name_records(self) -> list:
+        """Page 3's records, those set, else ModelBoard's with the actions named as the firmware names them."""
+        if self.names is not None:
+            return self.names
+        records = {(record[0][0], struct.unpack_from('<h', record[0], 1)[0]): record
+                   for record in super().name_records()}
+        for value, name in FIRMWARE_ACTIONS.items():
+            records[(NAMES_GPIO_ACTION, value)] = name_record(NAMES_GPIO_ACTION, value, name)
+        return [records[key] for key in sorted(records)]
+
+    def rename(self, enum, value, name=None) -> None:
+        """Give one value another name on page 3, or no record at all when name is None."""
+        records = [record for record in self.name_records()
+                   if (record[0][0], struct.unpack_from('<h', record[0], 1)[0]) != (enum, value)]
+        self.names = records + ([name_record(enum, value, name)] if name is not None else [])
 
     def _actions(self) -> list:
         """List each control's action, in page order."""

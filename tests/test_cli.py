@@ -115,10 +115,10 @@ def test_a_bad_profile_is_reported_before_connecting(tmp_path, capsys):
     The profile is the thing the user can fix, so it should be what they are
     told about even when the port is also wrong.
     """
-    path = profile_file(tmp_path, {'X': {'button': 'NOPE'}})
+    path = profile_file(tmp_path, {'X': {'button': 'N' * 41}})
     assert main(['--port', '9', '--profile', path]) == 1
     err = capsys.readouterr().err
-    assert "unknown control 'NOPE'" in err
+    assert "is not a name a board can give" in err
     assert 'could not reach' not in err
 
 

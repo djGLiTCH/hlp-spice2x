@@ -38,13 +38,13 @@ them, and importing one runs nothing.
 | File | What it covers |
 |---|---|
 | `test_capabilities.py` | What the bridge agrees to at connect: the major version, each capability it needs and each it can do without, the minor version gating nothing, the Summary and its white channel flag, and reading again only the pages whose change counter moved. |
-| `test_staging.py` | How a frame reaches the board's lights: control names by action, the case strip by kind, one light by index, raw ranges, the white channel, the order the passes are emitted in, and which report is answered. Also the startup check that names controls the board lacks or cannot light. |
-| `test_loop_resilience.py` | The run loop against a board that changes, is shared, or stops answering: the claim and its renewal, another application taking the lights over and giving them up, a lapsed claim, a takeover that ended, a configuration change, an unacknowledged frame, and a board that leaves the bus and returns. |
-| `test_profile.py` | Profile parsing, the control names, and frame resolution. |
+| `test_staging.py` | How a frame reaches the board's lights: control names by action, the case strip by kind, one light by index, raw ranges, the white channel, the order the passes are emitted in, and which report is answered. Also each control resolved through page 3, a name only page 3 gives, and the startup checks that name controls the firmware or the board lacks or cannot light. |
+| `test_loop_resilience.py` | The run loop against a board that changes, is shared, or stops answering: the claim and its renewal, another application taking the lights over and giving them up, a lapsed claim, a takeover that ended, a configuration change, an unacknowledged frame, and a board that leaves the bus and returns, its page 3 names read again. |
+| `test_profile.py` | Profile parsing, the control names and the firmware's name for each, resolution through page 3, and frame resolution. |
 | `test_cli.py` | Argument handling, `--version`, the `--debug` log, `--list-boards`, and the paths that exit before connecting. |
 | `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection, NUL framing across repeated calls, and a game that closes the connection raising a ConnectionError, which the bridge treats as a normal ending. |
 | `test_device_errors.py` | Finding a board: the bridge's messages when no board, or more than one, can be chosen, the listing of the boards, and a frame or a run when the board goes away. |
-| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe, its table checks and the names it gives actions and light kinds, the whole lights check on the board's clock, and the profile the end-to-end check writes. |
+| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe, its table checks and the names it gives actions and light kinds, the whole lights check on the board's clock and its page 3 names, and the profile the end-to-end check writes. |
 
 The protocol's transport, decoders, claim and `Session` are
 gp2040ce-hostlighting's, tested in its own suite.
@@ -136,14 +136,14 @@ It prints, as the bridge reads it:
   more than one
 - the controls, one per line
 
-An action or light kind that no profile can name is shown by the firmware's
-name for it from page 3, or by its value on a board that does not list page 3.
-
-It checks the two tables against the Summary's counts and against each other,
-and exits non-zero if a check fails.
+It names each action and light kind as a profile would, by its short name
+else by the firmware's name, and lists any short name the firmware lacks. It
+checks the two tables against the Summary's counts and against each other, and
+exits non-zero if a check fails.
 
 Run it first against any board, and first when the bridge behaves
-unexpectedly.
+unexpectedly. A board that does not list page 3 is shown as lacking it, and the
+probe stops there, as the bridge does.
 
 ### hardware_lights.py
 
@@ -156,7 +156,8 @@ phase announces what should be visible before it starts. Run it after
 changing anything that touches staging.
 
 Every control it uses comes from what the board reports. A phase with nothing
-to show on a given board says so and is skipped.
+to show on a given board says so and is skipped. Each control is named by the
+board's page 3, so a phase names the control it lights.
 
 Phase 2 lights every light on the Lights page one at a time, by ordinal. A
 control with two lights shows them separately, and an ordinal addressing the

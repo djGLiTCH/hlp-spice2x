@@ -75,7 +75,7 @@ def describe_board(prefix):
 
     :param prefix: board-ID prefix, or '' for the only board attached
     :return: (chase controls, strip control or None, strip light count,
-              a control with more than one light or None)
+              a control with more than one light or None, page 3's names)
     """
     device = hlp.open_device(prefix)
     try:
@@ -87,25 +87,26 @@ def describe_board(prefix):
                   if control[0] == ADDRESSING_KIND and len(caps.lights_of(control)) > 1]
         strip, strip_lights = strips[0] if strips else (None, 0)
         multi = next((control for control in chase if len(caps.lights_of(control)) > 1), None)
-        return chase, strip, strip_lights, multi
+        return chase, strip, strip_lights, multi, caps.names
     finally:
         device.close()
 
 
-def build_profile(chase, strip, strip_lights, multi):
+def build_profile(chase, strip, strip_lights, multi, names=None):
     """Write a profile naming this board's controls, and its strip light by light.
 
     :param chase: controls to put in the travelling chase
     :param strip: a kind of light the board has many of, addressed one light at a time
     :param strip_lights: how many lights of that kind it has
     :param multi: a control with more than one light, or None
+    :param names: the board's page 3 names, which name a control the bridge has no short name for
     :return: (the light names the fake API should report, the profile written)
     """
     lights, entries = [], {}
 
     for index, control in enumerate(chase):
-        name = f"Chase {hlp.control_name(control)}"
-        entries[name] = {'button': hlp.control_name(control),
+        name = f"Chase {hlp.control_name(control, names)}"
+        entries[name] = {'button': hlp.control_name(control, names),
                          'colour': wheel(index, len(chase))}
         lights.append(name)
 
@@ -114,7 +115,7 @@ def build_profile(chase, strip, strip_lights, multi):
     strip_names = []
     for index in range(strip_lights):
         name = f"Strip {index}"
-        entries[name] = {'button': hlp.control_name(strip), 'index': index,
+        entries[name] = {'button': hlp.control_name(strip, names), 'index': index,
                          'colour': wheel(index, strip_lights)}
         strip_names.append(name)
     lights.extend(strip_names)
@@ -122,7 +123,7 @@ def build_profile(chase, strip, strip_lights, multi):
     # one entry picking a single light of a control that has several, so the
     # chase and this entry fight over the same control every frame
     if multi is not None:
-        entries['Second light'] = {'button': hlp.control_name(multi), 'index': 1,
+        entries['Second light'] = {'button': hlp.control_name(multi, names), 'index': 1,
                                    'colour': '00FFFF'}
         lights.append('Second light')
 
@@ -166,19 +167,19 @@ def main(argv=None) -> int:
     :return: whatever the bridge's own entry point returned
     """
     prefix = (argv or sys.argv[1:] or [''])[0]
-    chase, strip, strip_lights, multi = describe_board(prefix)
+    chase, strip, strip_lights, multi, names = describe_board(prefix)
     if not chase:
         print("this board reports no single-lamp controls to animate")
         return 1
 
-    lights, strip_names = build_profile(chase, strip, strip_lights, multi)
-    chase_names = [f"Chase {hlp.control_name(control)}" for control in chase]
+    lights, strip_names = build_profile(chase, strip, strip_lights, multi, names)
+    chase_names = [f"Chase {hlp.control_name(control, names)}" for control in chase]
     server = StubServer(lights=[[name, 0.0, True] for name in lights],
                         mutate=animator(chase_names, strip_names))
     print(f"fake Spice API on port {server.port}")
     print(f"profile written to {PROFILE_PATH.name}: {len(chase)} chase control(s), "
           f"{strip_lights} strip light(s)"
-          + (f", one entry on {hlp.control_name(multi)}[1]" if multi is not None else ""))
+          + (f", one entry on {hlp.control_name(multi, names)}[1]" if multi is not None else ""))
     print(f"running the real entry point for {SECONDS:.0f}s, then interrupting it\n")
 
     # a real interrupt, so the shutdown path and the hand back are the real ones

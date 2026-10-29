@@ -76,7 +76,7 @@ def named_controls(caps) -> list:
             control = (hl.ADDRESSING_ACTION, record.owner.action)
         else:
             control = (hl.ADDRESSING_KIND, record.kind.value)
-        if control in hlp.CONTROL_NAMES and control not in controls and caps.lights_of(control):
+        if hlp.page_name(control, caps.names) is not None and control not in controls and caps.lights_of(control):
             controls.append(control)
     return controls
 
@@ -196,7 +196,7 @@ class LightsCheck:
         self.phase(1, "every control in turn",
                    "each control lit white on its own, in the board's own order")
         for control in self.controls:
-            self.note(hlp.control_name(control))
+            self.note(self.caps.control_name(control))
             self.hold({('button', control): WHITE}, staging, 0.6)
 
         self.phase(2, "every light in turn, by its own ordinal",
@@ -206,7 +206,7 @@ class LightsCheck:
                          for index, record in enumerate(self.caps.lights_of(control)))
         self.note(f"{len(ordered)} lights, 0.4s each")
         for ordinal, control, index in ordered:
-            self.note(f"ordinal {ordinal}: {hlp.control_name(control)}[{index}]")
+            self.note(f"ordinal {ordinal}: {self.caps.control_name(control)}[{index}]")
             self.hold({('light', control, index): WHITE}, staging, 0.4)
 
         self.phase(3, "every control at once",
@@ -214,7 +214,7 @@ class LightsCheck:
         self.hold({('button', control): WHITE for control in self.controls}, staging, 5)
 
         if self.multi:
-            named = ', '.join(hlp.control_name(control) for control in self.multi)
+            named = ', '.join(self.caps.control_name(control) for control in self.multi)
             self.phase(4, "controls the board gives more than one light",
                        f"{named} red, BOTH lights of each, everything else dark")
             self.hold({('button', control): RED for control in self.multi}, staging, 6)
@@ -244,7 +244,7 @@ class LightsCheck:
 
         if self.multi:
             control = self.multi[0]
-            name = hlp.control_name(control)
+            name = self.caps.control_name(control)
             one = ('light', control, 1)
             self.phase(7, "precedence between the ways of reaching a light",
                        f"{name} both red, then one red one cyan, then one red one dark, "
@@ -263,7 +263,7 @@ class LightsCheck:
 
         ramp_control = self.singles[0] if self.singles else self.controls[0]
         self.phase(8, "brightness following the game's light level",
-                   f"{hlp.control_name(ramp_control)} fading from off to full red")
+                   f"{self.caps.control_name(ramp_control)} fading from off to full red")
         ramp = {'x': (('button', ramp_control), RED)}
         ramp_staging = bridge.staging_for(ramp, self.caps)
         self.hold(profile_module.resolve_frame({'x': 0.0}, ramp), ramp_staging, 0)
@@ -276,8 +276,8 @@ class LightsCheck:
         if len(self.controls) >= 2:
             first, second = self.controls[0], self.controls[1]
             self.phase(9, "a control leaving the frame",
-                       f"{hlp.control_name(first)} and {hlp.control_name(second)} red, then "
-                       f"{hlp.control_name(first)} must go DARK")
+                       f"{self.caps.control_name(first)} and {self.caps.control_name(second)} red, then "
+                       f"{self.caps.control_name(first)} must go DARK")
             self.hold({('button', first): RED, ('button', second): RED}, staging, 3)
             self.note("one control leaves the frame, so the staged frame is cleared first")
             self.hold({('button', second): RED}, staging, 6)
@@ -287,7 +287,7 @@ class LightsCheck:
         overlay = self.controls[:2]
         self.phase(10, "overlay mode",
                    "the board's own animation underneath, with "
-                   f"{', '.join(hlp.control_name(control) for control in overlay)} white on top")
+                   f"{', '.join(self.caps.control_name(control) for control in overlay)} white on top")
         self.configure(True, 10000)
         self.hold({('button', control): WHITE for control in overlay}, staging, 8)
 
@@ -297,7 +297,7 @@ class LightsCheck:
         # a deliberately short keepalive, so holding for 8s proves the claim is being renewed
         self.configure(False, 2000)
         steady = self.singles[0] if self.singles else self.controls[0]
-        self.note(f"keepalive timeout 2000 ms, holding {hlp.control_name(steady)} amber for 8s")
+        self.note(f"keepalive timeout 2000 ms, holding {self.caps.control_name(steady)} amber for 8s")
         self.hold({('button', steady): AMBER}, staging, 8)
         state = self.device.read_record(hl.PAGE_STATE, hlp.STATE_GROUPS).records[0]
         if not state.state.takeover_live or not state.holder.held_by(self.claim.token):

@@ -108,9 +108,10 @@ everything else from the capabilities the board lists.
 
 | The board lists | What the bridge does with it |
 |---|---|
-| `CLAIM`, `CONFIGURE`, `STAGE`, `CLEAR`, the request flags, and pages 1, 8 and 12 | Required. Without them the bridge stops and names what is missing. |
-| The addressing modes | Required as the profile uses them. A control name is staged by action. `CASE`, `TURBO` and `PLED1`-`PLED4` are staged by kind, an `index` by light and a `range` as an LED run. |
+| `CLAIM`, `CONFIGURE`, `STAGE`, `CLEAR`, the request flags, and pages 1, 3, 8 and 12 | Required. Without them the bridge stops and names what is missing. |
+| The addressing modes | Required as the profile uses them. A control name is staged by action. `CASE`, `TURBO`, `PLED1`-`PLED4` and any light kind named by its firmware name are staged by kind, an `index` by light and a `range` as an LED run. The modes are checked again once the names are resolved. |
 | Page 10, the controls | The startup warnings tell a mapped control the board does not have from one it has with no LED. |
+| Page 3, the names | The firmware's name for each action and kind of light. At startup, and when the board returns, the bridge looks up each control the profile names and stages it by the value the board's firmware gives it. A profile can use any of these names, so a control a later firmware adds needs no new bridge. A name the firmware does not have is reported and lights nothing. |
 | `SUBSCRIBE` and the `STATE_CHANGED` event | The bridge learns of a change on the board from an event. With or without them it reads page 1 at least once a second. |
 | The RGBW pixel format, on a chain the Summary flags as having a white channel | A white component in a profile colour is sent. |
 

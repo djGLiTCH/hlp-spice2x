@@ -42,6 +42,10 @@ Its parts, in the order a host uses them:
   library, in the bridge's own words when no board can be chosen.
 - `REQUIRED` and `requirements` name what the bridge needs a board to list in
   `HELLO`, with the addressing modes a profile stages by.
+- `FIRMWARE_NAMES` gives the name `proto/enums.proto` gives each short
+  name's value. `name_index` and `resolve_control` look a control up on a
+  board's page 3, and `control_name` names one as a profile would, by page 3
+  once it is read.
 - `HostLightingCapabilities` answers call sites from a `ConfigurationCache`,
   the session's or its own. `lights_of` gives the lights `STAGE` reaches
   through a control, and `lacks_control` says whether page 10 shows the board
@@ -51,6 +55,8 @@ Its parts, in the order a host uses them:
 
 Then `bridge.py`:
 
+- `start_board` resolves the profile through the board's page 3, with
+  `profile.resolve`, at connect and when the board returns.
 - `staging_for` decides how each of the profile's targets reaches the board's
   lights, at connect and again when the board's configuration changes. A
   control name becomes an entry by action or kind, and an `index` becomes a
@@ -71,7 +77,9 @@ Then `bridge.py`:
 A target is not a light. `('button', (6, 5))` names a control by the
 addressing mode and address `STAGE` reaches it by, here action 5, B1. The
 board resolves it. `('light', (6, 1), 1)` names one light of a control by its
-position in the board's Lights page. `('range', 16, 30)` names raw LED
+position in the board's Lights page. A name the bridge has no value for is
+`('button', ('firmware', 'BUTTON_PRESS_E13'))` until it is resolved on a
+board. `('range', 16, 30)` names raw LED
 indexes. The three differ in portability and in how they fail, which
 `profiles/README.md` covers.
 

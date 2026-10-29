@@ -16,6 +16,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+This version speaks HLP v2.0 release candidate 11 (`HLP_v2.0-rc11`). It is a
+pre-release.
+
+### Added
+
+- A profile's `button` can be any name the board's page 3 gives an action or a
+  kind of light, such as `BUTTON_PRESS_TURBO`. A button, action or light a
+  later GP2040-CE firmware adds can be mapped without a new bridge.
+- A dry run names each control name that is not a short name, since only a
+  board's page 3 can check it.
+- `hardware_probe` lists any short name the board's firmware does not have.
+
+### Changed
+
+- At startup, and when the board returns, the bridge looks up each control the
+  profile names on the board's page 3. It stages the control by the value the
+  board's firmware gives it, not by a value of its own. A name the firmware
+  does not have is reported and lights nothing. Page 3 is read before the
+  lights are claimed, since it takes about 0.3 s.
+- A control name the bridge does not know is no longer a profile error. It is
+  looked up on the board, and only a name no board can give is refused.
+- The bridge requires page 3, which every HLP v2.0 build from release candidate
+  10 lists. A board without it is refused, and the bridge names the page.
+  `hardware_probe` shows such a board as lacking page 3 and stops there.
+- `hardware_probe` and `hardware_lights` name each action and kind of light by
+  the board's page 3.
+
 ## [0.7.0] - 2026-10-29
 
 This version speaks HLP v2.0 release candidate 11 (`HLP_v2.0-rc11`). It is a

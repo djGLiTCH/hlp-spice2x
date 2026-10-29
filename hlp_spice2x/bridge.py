@@ -24,12 +24,13 @@ import time
 from gp2040ce_hostlighting.claim import ClaimState
 from gp2040ce_hostlighting.frames import Frame, publish_frame
 from gp2040ce_hostlighting.protocol import (ADDRESSING_ACTION, ADDRESSING_KIND, ADDRESSING_LED_RUN, ADDRESSING_LIGHT,
-                                            PAGE_CONTROLS, PAGE_IDENTITY, PAGE_LIGHTS, PAGE_SUMMARY, PIXEL_RGB,
+                                            PAGE_CONTROLS, PAGE_IDENTITY, PAGE_LIGHTS, PAGE_NAMES, PAGE_SUMMARY,
+                                            PIXEL_RGB,
                                             PIXEL_RGBW, TAKEOVER_OVERLAY, TAKEOVER_WHOLE_FRAME,
                                             HostLightingClaimedError, HostLightingDisconnectedError,
                                             HostLightingError, HostLightingIncompatibleError, HostLightingMagicError,
                                             HostLightingRejectedError, HostLightingUnansweredError, Settings,
-                                            subtractive_white)
+                                            require_capabilities, subtractive_white)
 from gp2040ce_hostlighting.session import Session
 
 from . import hlp, profile as profile_module
@@ -127,13 +128,15 @@ def send_frame(device, frame, staging, clear_first=False):
 def addressing_used(profile) -> set:
     """List the addressing modes a profile's targets are staged by.
 
-    :param profile: a loaded profile
-    :return: the ADDRESSING_* modes the board has to offer for it
+    :param profile: a loaded profile, or one resolved against a board
+    :return: the ADDRESSING_* modes the board has to offer for it, leaving out
+        a control named by page 3's name until it is resolved
     """
     modes = set()
     for target, _ in profile.values():
         if target[0] == 'button':
-            modes.add(target[1][0])
+            if target[1][0] != hlp.FIRMWARE:
+                modes.add(target[1][0])
         elif target[0] == 'light':
             modes.add(ADDRESSING_LIGHT)
         else:
@@ -152,15 +155,15 @@ def validate_targets(profile, caps) -> tuple:
     the rest. A control it leaves out is not on the board, and one it lists is
     wired but has no LED.
 
-    :param profile: a loaded profile
+    :param profile: a profile resolved against the board
     :param caps: the board's capabilities
     :return: (controls the board has no LED for, controls the board does not have)
     """
     controls = sorted({target[1] for target, _ in profile.values() if target[0] == 'button'})
     unlit = [control for control in controls if not caps.lights_of(control)]
     absent = [control for control in unlit if caps.lacks_control(control)]
-    return ([hlp.control_name(control) for control in unlit if control not in absent],
-            [hlp.control_name(control) for control in absent])
+    return ([caps.control_name(control) for control in unlit if control not in absent],
+            [caps.control_name(control) for control in absent])
 
 
 def light_operation(caps, control, index) -> tuple:
@@ -172,7 +175,7 @@ def light_operation(caps, control, index) -> tuple:
     :return: the staging operation that colours that light
     :raises profile_module.ProfileError: if this board cannot offer that light
     """
-    name = hlp.control_name(control)
+    name = caps.control_name(control)
     records = caps.lights_of(control)
     if index >= len(records):
         raise profile_module.ProfileError(
@@ -191,7 +194,7 @@ def staging_for(profile, caps, problems=None) -> dict:
     after a configuration change passes `problems`, and the entries the board
     cannot honour are held back and described there.
 
-    :param profile: a loaded profile
+    :param profile: a profile resolved against the board
     :param caps: the board's capabilities
     :param problems: if given, entries the board cannot honour are described into
         this list and staged as nothing
@@ -230,7 +233,7 @@ def staging_for(profile, caps, problems=None) -> dict:
 def white_warnings(profile, caps) -> list:
     """Say, once at startup, where a profile's white component cannot be used.
 
-    :param profile: a loaded profile
+    :param profile: a profile resolved against the board
     :param caps: the board's capabilities
     :return: warnings to report, empty when the profile asks for no white
     """
@@ -257,7 +260,7 @@ def ranges_past_the_board(profile, caps) -> list:
 
     These are reported as a warning and the rest of each range is staged.
 
-    :param profile: a loaded profile
+    :param profile: a profile resolved against the board
     :param caps: the board's capabilities
     :return: the (start, count) pairs that reach past the board, in order
     """
@@ -271,7 +274,7 @@ def restage(profile, caps, report) -> dict:
     The entries that no longer fit the board are held back and reported once.
     The rest of the profile carries on.
 
-    :param profile: a loaded profile
+    :param profile: a profile resolved against the board
     :param caps: the board's capabilities, already refreshed
     :param report: callable used for progress output
     :return: the staging to use from here on
@@ -315,22 +318,52 @@ def frame_stats(frames: int, misses: int, started: float) -> str:
             f"{misses} frames unacknowledged")
 
 
-def start_board(session, profile, report, returning=False) -> tuple:
+def names_before_claim(device):
+    """Read a board's page 3 before anything is claimed, or give None where the board does not list it.
+
+    Page 3 is some 150 requests, about 0.3 s on the M Ultra on rc11, which is
+    longer than the shortest keepalive timeout. Read after the claim, it could
+    let the claim lapse before its first renewal.
+
+    :param device: an opened HostLightingDevice
+    :return: page 3's names, as read_names() returns them, or None
+    :raises HostLightingIncompatibleError: if the interface did not answer as a Host Lighting one
+    """
+    try:
+        hello = device.hello()
+    except HostLightingMagicError:
+        raise HostLightingIncompatibleError(hlp.NOT_HOST_LIGHTING) from None
+    return device.read_names() if PAGE_NAMES in hello.pages else None
+
+
+def start_board(session, profile, report, names, returning=False) -> tuple:
     """Report a started session's board, and resolve the profile against it.
+
+    Each control is resolved through the board's page 3, so it is staged by
+    the value the board's own firmware gives it. A control the firmware has no
+    name for is reported and lights nothing.
 
     :param session: the started Session
     :param profile: a loaded profile
     :param report: callable used for progress output
+    :param names: the board's page 3 names, read before the claim
     :param returning: the board left the bus mid-run and is back, so an entry
         the board cannot honour is held back
-    :return: (the board's capabilities, the staging)
+    :return: (the board's capabilities, the staging, the profile resolved against the board)
     :raises profile_module.ProfileError: if the board itself cannot honour the profile
+    :raises HostLightingIncompatibleError: if the board lacks an addressing mode the resolved profile stages by
     """
-    caps = hlp.HostLightingCapabilities(session.hello, session.cache)
+    caps = hlp.HostLightingCapabilities(session.hello, session.cache, names)
     label, firmware = (hlp.label_and_firmware(session.device) if PAGE_IDENTITY in session.hello.pages
                        else ('?', '?'))
     report(f"board: {label} ({firmware})")
     report(caps.summary_line())
+    profile, unnamed = profile_module.resolve(profile, caps.names)
+    # a control named by page 3's name is staged by action or by kind, which only the board says
+    require_capabilities(session.hello, hlp.requirements(addressing_used(profile)))
+    if unnamed:
+        report(f"warning: {len(unnamed)} mapped control(s) are not in this board's firmware and light "
+               f"nothing: {', '.join(unnamed_line(control) for control in unnamed)}")
     applied = session.claim.applied
     if session.claim.state is ClaimState.HELD and applied is not None:
         report(f"takeover: {'overlay' if applied.takeover == TAKEOVER_OVERLAY else 'whole frame'}, "
@@ -354,13 +387,19 @@ def start_board(session, profile, report, returning=False) -> tuple:
                + ', '.join(f"[{start}, {count}]" for start, count in over))
     for warning in white_warnings(profile, caps):
         report(f"warning: {warning}")
-    several = sorted(hlp.control_name(target[1]) for target in staging
+    several = sorted(caps.control_name(target[1]) for target in staging
                      if target[0] == 'button' and target[1][0] == ADDRESSING_ACTION
                      and len(caps.lights_of(target[1])) > 1)
     if several:
         report(f"controls the board gives more than one light, all of which will be "
                f"lit: {', '.join(several)}")
-    return caps, staging
+    return caps, staging, profile
+
+
+def unnamed_line(control) -> str:
+    """Name a control the board's firmware does not have, with the name it was looked up by."""
+    name, looked_up = hlp.control_name(control), hlp.firmware_name(control)
+    return name if name == looked_up else f"{name} ({looked_up})"
 
 
 def lost_line(error) -> str:
@@ -411,6 +450,8 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
     started = time.monotonic()
     caps = hlp.HostLightingCapabilities.absent()
     staging = {}
+    # the profile as the board resolved it, or as loaded on a dry run
+    active = profile
     session = None
     library = logging.getLogger('gp2040ce_hostlighting')
     lines, level = _ReportLines(report), library.level
@@ -418,15 +459,40 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
     # INFO for the lines reported, or DEBUG when -d asked for it
     library.setLevel(min(logging.INFO, library.getEffectiveLevel()))
 
+    # page 3 of the board now open, read before each claim
+    board = {}
+
+    def reopen_named(board_id):
+        """Open the board again and read its page 3, or give None while it is off the bus.
+
+        A board that does not answer yet raises, and back() looks for it again.
+        """
+        found = reopen(board_id) if reopen is not None else None
+        if found is None:
+            return None
+        try:
+            board['names'] = names_before_claim(found)
+        except BaseException:
+            found.close()   # the session has not taken it yet, so it is closed here, Ctrl-C included
+            raise
+        return found
+
     try:
-        if device is not None:
+        if device is None:
+            unchecked = sorted({target[1][1] for target, _ in profile.values()
+                                if target[0] in ('button', 'light') and target[1][0] == hlp.FIRMWARE})
+            if unchecked:
+                report(f"{len(unchecked)} control name(s) are not short names, which only a board's page 3 "
+                       f"can check: {', '.join(unchecked)}")
+        else:
+            board['names'] = names_before_claim(device)
             settings = Settings(takeover=TAKEOVER_OVERLAY if overlay else TAKEOVER_WHOLE_FRAME,
                                 keepalive_ms=timeout_ms, brightness_applied=not full_brightness)
             # a holder at the start is an error, and one that takes the lights over mid-run is waited out
             session = Session(device, CLAIM_NAME, settings, force=force,
                               require=hlp.requirements(addressing_used(profile)),
                               pages=hlp.CACHE_PAGES, masks=hlp.CACHE_MASKS,
-                              reopen=reopen or (lambda board_id: None))
+                              reopen=reopen_named)
             try:
                 session.start()
             except HostLightingMagicError:
@@ -435,7 +501,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                 raise HostLightingError(
                     f"'{error.holder.application_name}' holds this board's lights. Close it, or pass "
                     f"--force to take the lights over from it") from None
-            caps, staging = start_board(session, profile, report)
+            caps, staging, active = start_board(session, profile, report, board['names'])
 
         # resolved after the handshake, since the board's render rate is unknown before it
         fps, why = resolve_stream_rate(fps, caps)
@@ -456,7 +522,7 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                            f"{', '.join(missing[:6])}{' ...' if len(missing) > 6 else ''}")
                 reported_unmapped = True
 
-            frame = profile_module.resolve_frame(states, profile)
+            frame = profile_module.resolve_frame(states, active)
             now = time.monotonic()
 
             try:
@@ -464,7 +530,10 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                     if now >= retry_due:
                         retry_due = now + RECONNECT_SECONDS
                         if back(session):
-                            caps, staging = start_board(session, profile, report, returning=True)
+                            caps, staging, active = start_board(session, profile, report, board['names'],
+                                                                returning=True)
+                            # the board's firmware may give a control another value now
+                            frame = profile_module.resolve_frame(states, active)
                             away = False
                             last_frame = None
                 elif session is not None:
@@ -483,8 +552,8 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
                         if update.pages_read & RESOLVED_FROM:
                             # A light's ordinal is what an index addresses, so the
                             # profile is resolved again before anything more is staged.
-                            staging = restage(profile, caps, report)
-                            ranges = any(target[0] == 'range' for target, _ in profile.values())
+                            staging = restage(active, caps, report)
+                            ranges = any(target[0] == 'range' for target, _ in active.values())
                             report("board configuration changed, controls re-resolved"
                                    + (". Check the profile's raw ranges" if ranges else ""))
                         if update.restage or update.pages_read & RESOLVED_FROM:

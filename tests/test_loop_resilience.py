@@ -281,7 +281,8 @@ def test_an_unacknowledged_frame_is_sent_once_more_then_staged_whole_next_time()
     assert board.frames == [{0: RED}, {0: DIM_RED}]
     dropped = [request for request in board.sent(hl.CMD_STAGE) if request[7:10] == bytes(DIM_RED)]
     assert len(dropped) == 3 and dropped[0][3:] == dropped[1][3:] == dropped[2][3:]
-    assert len(board.sent(hl.CMD_HELLO)) == 2
+    # one before the claim, for page 3, one in the session's start, and the one that finds the board there
+    assert len(board.sent(hl.CMD_HELLO)) == 3
     assert board.sent(hl.CMD_CLEAR)
 
 
@@ -544,6 +545,73 @@ def test_a_returning_board_with_other_firmware_ends_the_run(monkeypatch):
         run_with(board, ON, after(board.unplug, DIM), after(back_without_stage, DIM), DIM,
                  reopen=returning(board))
     assert board.closed
+
+
+def test_a_returning_board_is_resolved_through_its_page_3_again(monkeypatch):
+    """Test that a board back with other firmware, which gives Up Down's value, has Up staged by the new value."""
+    monkeypatch.setattr(bridge, 'RECONNECT_SECONDS', 0.0)
+    board = Board()
+
+    def back_renumbered():
+        board.replug()
+        board.rename(hl.NAMES_GPIO_ACTION, 1, 'BUTTON_PRESS_DOWN')
+        board.rename(hl.NAMES_GPIO_ACTION, 2, 'BUTTON_PRESS_UP')
+
+    run_with(board, ON, after(board.unplug, DIM), after(back_renumbered, DIM), DIM, reopen=returning(board))
+    assert board.frames[0] == {0: RED} and board.frames[-1] == {1: DIM_RED}
+
+
+def test_a_returning_board_whose_page_3_does_not_answer_is_tried_again(monkeypatch):
+    """Test that a page 3 read that fails on a returning board closes that handle and is tried again."""
+    monkeypatch.setattr(bridge, 'RECONNECT_SECONDS', 0.0)
+    board = Board()
+    opened = []
+
+    def reopen(board_id):
+        device = returning(board)(board_id)
+        opened.append(device)
+        return device
+
+    def back_without_names():
+        board.replug()
+        board.drop.add((hl.CMD_GET_PAGE, hl.PAGE_NAMES))
+
+    text = run_with(board, ON, after(board.unplug, DIM), after(back_without_names, DIM),
+                    after(lambda: board.drop.discard((hl.CMD_GET_PAGE, hl.PAGE_NAMES)), DIM), DIM, reopen=reopen)
+    assert 'Traceback' not in text and board.frames[-1] == {0: DIM_RED}
+    assert len([device for device in opened if device is not None]) >= 2 and board.closed
+
+
+def test_a_returning_board_without_a_name_reports_it_and_lights_the_rest(monkeypatch):
+    """Test that a name a returning board's firmware no longer has is named again and its entry drops out."""
+    monkeypatch.setattr(bridge, 'RECONNECT_SECONDS', 0.0)
+    board = Board()
+    profile = dict(PROFILE, **{'P1 Down': (('button', T['DOWN']), RED)})
+    on = dict(ON, **{'P1 Down': 1.0})
+    dim = dict(DIM, **{'P1 Down': 1.0})
+
+    def back_without_up():
+        board.replug()
+        board.rename(hl.NAMES_GPIO_ACTION, 1)
+
+    text = run_with(board, on, after(board.unplug, dim), after(back_without_up, dim), dim, profile=profile,
+                    reopen=returning(board))
+    assert ("1 mapped control(s) are not in this board's firmware and light nothing: Up (BUTTON_PRESS_UP)"
+            in text)
+    assert board.frames[0] == {0: RED, 1: RED} and board.frames[-1] == {1: RED}
+
+
+def test_a_configuration_change_keeps_a_control_only_page_3_names(monkeypatch):
+    """Test that a control named by its firmware name follows the board's lights when the board is set up again."""
+    board = Board(lights=[('Up', 0), ((hl.ADDRESSING_ACTION, 60), 1)])
+    board.rename(hl.NAMES_GPIO_ACTION, 60, 'BUTTON_PRESS_E13')
+    profile = {'New': (('button', (hlp.FIRMWARE, 'BUTTON_PRESS_E13')), RED)}
+    states = {'New': 1.0}
+    text = run_with(board, states,
+                    after(lambda: board.rewire(lights=[('Up', 0), ((hl.ADDRESSING_ACTION, 60), 5)]), states),
+                    states, profile=profile)
+    assert board.frames[0] == {1: RED} and board.frames[-1] == {5: RED}
+    assert 'board configuration changed' in text
 
 
 def test_a_board_that_stops_answering_on_a_static_screen_is_lost():

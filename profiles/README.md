@@ -67,6 +67,15 @@ board attached.
   `L3` `R3` `A1` `A2` `A3` `A4` and `E1`-`E12` name controls.
 - `PLED1`-`PLED4`, `TURBO` and `CASE` name a kind of light: a player LED, the
   turbo lights, and the case strip.
+- Any other name is the board's firmware's name for an action or a kind of
+  light, as its page 3 gives it, such as `BUTTON_PRESS_TURBO` or
+  `Player1Light`. Case does not matter. A name a later firmware adds works as
+  soon as the board runs that firmware. `hardware_probe` shows a wired control
+  that has no short name by this name. `hlp-caps --names --page names`, from
+  gp2040ce-hostlighting, lists every name the board gives.
+
+At startup the bridge looks each name up on the board's page 3, and stages it
+by the value the board's own firmware gives it.
 
 Where a control has several lights, its name lights all of them. `CASE` and
 `TURBO` reach every light of their kind. An empty field ignores that light.
@@ -153,11 +162,13 @@ animations, so a six-digit white still lights the white LED.
 
 ## A profile that does not fit the board
 
-A fault in the profile itself is reported before the bridge connects: an
-unknown control name, a malformed range, or a colour that is not hex.
+A fault in the profile itself is reported before the bridge connects: a
+control name no board can give, a malformed range, or a colour that is not hex.
+A board gives names of printable ASCII up to 40 bytes long.
 
 A mapped control the board cannot light is not an error. The bridge names it
-at startup, as having no LED on this board or as not being on this board, and
+at startup, as not being in this board's firmware, as having no LED on this
+board or as not being on this board, and
 carries on.
 
 An `index` entry is checked at connect, against the board. An index past the

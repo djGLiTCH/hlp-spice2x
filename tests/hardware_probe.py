@@ -24,8 +24,10 @@ What is printed, in order:
 * Page 0 is identity, the board label and firmware version.
 * Page 1 is state, which gives whether a host frame is shown, the holder, and
   the CONFIGURE settings in force.
-* Page 3 gives the firmware's names for its actions and light kinds. An action
-  or kind no profile can name is shown by the firmware's name for it.
+* Page 3 gives the firmware's names for its actions and light kinds. A profile
+  can name a control by any of them, and the bridge resolves each short name
+  through them. Each action and kind is shown by its short name, else by the
+  firmware's name, as a profile names it.
 * Page 8 is the Summary, which gives the LED extent and addressable limit, the
   render rate and colour format, and a change counter for each configuration
   page.
@@ -39,8 +41,7 @@ The two tables are then checked against the Summary's counts and against each
 other, and the probe exits non-zero if a check fails.
 
 `hlp-caps` in gp2040ce-hostlighting prints every page and field the protocol
-has. This prints the ones the bridge reads, as the bridge reads them, and
-page 3 to name what they show.
+has. This prints the ones the bridge reads, as the bridge reads them.
 
 Run it from the repository root:
 
@@ -64,27 +65,26 @@ def light_mark(record) -> str:
 
 
 def action_name(action, names=None) -> str:
-    """Name an action as a profile would, else by the firmware's name for it, else by its value.
+    """Name an action as a profile would: its short name, else the firmware's name for it, else its value.
 
     :param action: the action's value, or None
     :param names: page 3's names, as read_names() returns them
     """
     if action is None:
         return 'none'
-    if (hl.ADDRESSING_ACTION, action) in hlp.CONTROL_NAMES:
-        return hlp.CONTROL_NAMES[(hl.ADDRESSING_ACTION, action)]
-    return (names or {}).get('GpioAction', {}).get(action, f"action {action}")
+    return hlp.control_name((hl.ADDRESSING_ACTION, action), names)
 
 
 def kind_name(kind, names=None) -> str:
-    """Name a light kind as a profile would, else as the probe does, else by the firmware's name for it.
+    """Name a light kind: its short name, else as the probe does, else the firmware's name for it.
 
     :param kind: the kind's value
     :param names: page 3's names, as read_names() returns them
     """
-    if (hl.ADDRESSING_KIND, kind) in hlp.CONTROL_NAMES:
-        return hlp.CONTROL_NAMES[(hl.ADDRESSING_KIND, kind)]
-    return KIND_NAMES.get(kind) or (names or {}).get('LightType', {}).get(kind, f"kind {kind}")
+    named = hlp.page_name((hl.ADDRESSING_KIND, kind), names or {})
+    if named is not None and named.upper() in hlp.SHORT_NAMES:
+        return hlp.SHORT_NAMES[named.upper()]
+    return KIND_NAMES.get(kind) or named or f"kind {kind}"
 
 
 def describe_hello(hello) -> None:
@@ -140,9 +140,14 @@ def describe_summary(summary, counters) -> None:
 
 
 def describe_names(names) -> None:
-    """Print how many names page 3 gives."""
+    """Print how many names page 3 gives, and any short name this firmware has no value for."""
     print(f"\npage {hl.PAGE_NAMES}, names: {len(names.get('GpioAction', {}))} action(s), "
           f"{len(names.get('LightType', {}))} light kind(s)")
+    index = hlp.name_index(names)
+    missing = [hlp.CONTROL_NAMES[control] for control in hlp.FIRMWARE_NAMES
+               if hlp.resolve_control(control, index) is None]
+    print(f"   short names          {len(hlp.FIRMWARE_NAMES) - len(missing)} of {len(hlp.FIRMWARE_NAMES)} "
+          f"on this firmware{', not ' + ', '.join(missing) if missing else ''}")
 
 
 def describe_lights(records, names=None) -> None:
@@ -221,13 +226,11 @@ def main(argv=None) -> int:
             label, firmware = hlp.label_and_firmware(device)
             print(f"\npage {hl.PAGE_IDENTITY}, identity: {label} ({firmware})")
         describe_state(device.read_record(hl.PAGE_STATE, hlp.STATE_GROUPS))
-        names = {}
-        if hl.PAGE_NAMES in hello.pages:
-            names = device.read_names()
-            describe_names(names)
 
         # what a host would decide from all of the above
         caps = hlp.negotiate(device)
+        names = caps.names
+        describe_names(names)
         describe_summary(caps.summary, caps.cache.counters)
         describe_lights(caps.lights, names)
         coherent = True
