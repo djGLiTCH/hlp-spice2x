@@ -18,12 +18,17 @@ the major version is 0, a minor bump is where breaking changes go.
 
 ## [Unreleased]
 
+This version speaks HLP v2.0 release candidate 11 (`HLP_v2.0-rc11`). It is a
+pre-release. Release candidate 11 renames page 1's group 1 and changes no byte
+on the wire, so boards on release candidate 10 are driven as before.
+
 ### Changed
 
 - gp2040ce-hostlighting 1.0.0rc4 names page 1's group 1 Holder, where 1.0.0rc3
   named it Controller. pip installs it with the bridge from its `v1.0.0rc4` tag
   on GitHub until 1.0.0 is on PyPI, with HLP v2.0 final.
 - `hardware_lights` and `hardware_probe` read the claim from the Holder group.
+- Firmware and protocol links point at the `HLP_v2.0-rc11` tag.
 
 ## [0.6.0] - 2026-10-29
 
