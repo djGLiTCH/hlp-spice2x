@@ -22,6 +22,12 @@ This version speaks HLP v2.0 release candidate 11 (`HLP_v2.0-rc11`). It is a
 pre-release. Release candidate 11 renames page 1's group 1 and changes no byte
 on the wire, so boards on release candidate 10 are driven as before.
 
+### Added
+
+- `hardware_probe` reads page 3, the firmware's names for its actions and light
+  kinds. An action or kind no profile can name is shown by that name, such as
+  `BUTTON_PRESS_TURBO` for action 32, where the probe showed `action 32`.
+
 ### Changed
 
 - gp2040ce-hostlighting 1.0.0rc4 names page 1's group 1 Holder, where 1.0.0rc3

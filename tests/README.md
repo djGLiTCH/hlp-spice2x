@@ -44,7 +44,7 @@ them, and importing one runs nothing.
 | `test_cli.py` | Argument handling, `--version`, the `--debug` log, `--list-boards`, and the paths that exit before connecting. |
 | `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection, NUL framing across repeated calls, and a game that closes the connection raising a ConnectionError, which the bridge treats as a normal ending. |
 | `test_device_errors.py` | Finding a board: the bridge's messages when no board, or more than one, can be chosen, the listing of the boards, and a frame or a run when the board goes away. |
-| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe and its table checks, the whole lights check on the board's clock, and the profile the end-to-end check writes. |
+| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe, its table checks and the names it gives actions and light kinds, the whole lights check on the board's clock, and the profile the end-to-end check writes. |
 
 The protocol's transport, decoders, claim and `Session` are
 gp2040ce-hostlighting's, tested in its own suite.
@@ -130,10 +130,14 @@ It prints, as the bridge reads it:
 - the protocol version and the capabilities `HELLO` lists
 - the board's identity
 - its state, including the holder
+- how many names page 3 gives for the firmware's actions and light kinds
 - the Summary
 - the lights, grouped by control, with a note against any control that has
   more than one
 - the controls, one per line
+
+An action or light kind that no profile can name is shown by the firmware's
+name for it from page 3, or by its value on a board that does not list page 3.
 
 It checks the two tables against the Summary's counts and against each other,
 and exits non-zero if a check fails.

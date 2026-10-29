@@ -16,7 +16,7 @@ import json
 
 import pytest
 from gp2040ce_hostlighting import protocol as hl
-from gp2040ce_hostlighting.testing import attach, control_record, summary_record
+from gp2040ce_hostlighting.testing import HELLO_PAGES, attach, control_record, name_record, summary_record
 
 from hlp_spice2x import hlp
 from hlp_spice2x import profile as profile_module
@@ -50,14 +50,47 @@ def test_the_probe_prints_a_board_and_finds_it_coherent(monkeypatch, capsys):
     assert 'the bridge needs     nothing this board lacks' in out
     assert 'page 0, identity: Haute42 COSMOX M Ultra (v0.0.0-fake)' in out
     assert 'lights claimed by    nobody, claim generation 1' in out
+    assert 'page 3, names: 36 action(s), 7 light kind(s)' in out
     assert 'controls             21 (16 lit, 5 unlit)' in out
     assert 'Up         x2   #3@LED3+1 on GP2, #12@LED12+1 on GP27   <-- more than one light' in out
     assert 'CASE       x30' in out
-    assert 'GP14   action 32   action 32  unlit' in out
+    assert 'GP14   action 32   ACTION_32  unlit' in out
     assert 'GP27   action 1    Up         lit (duplicate)' in out
     assert out.count('coherent') == 3 and 'MISMATCH' not in out
     assert {request[0] for request in board.requests} == {hl.CMD_HELLO, hl.CMD_GET_PAGE}
     assert board.closed
+
+
+def test_the_probe_names_an_action_no_profile_can_name_by_the_firmwares_name(monkeypatch, capsys):
+    """Test that page 3 names an action the profiles have no name for, and a profile's name comes first."""
+    board = m_ultra()
+    board.names = [name_record(hl.NAMES_GPIO_ACTION, 32, 'BUTTON_PRESS_TURBO'),
+                   name_record(hl.NAMES_GPIO_ACTION, 1, 'BUTTON_PRESS_UP')]
+    attach(monkeypatch, board)
+    assert hardware_probe.main(['']) == 0
+    out = capsys.readouterr().out
+    assert 'page 3, names: 2 action(s), 0 light kind(s)' in out
+    assert 'GP14   action 32   BUTTON_PRESS_TURBO unlit' in out
+    assert 'GP2    action 1    Up         lit (duplicate)' in out
+
+
+def test_the_probe_names_actions_by_value_on_a_board_without_page_3(monkeypatch, capsys):
+    """Test that a board that does not list page 3 is probed as before, its unnamed actions by value."""
+    board = m_ultra(pages=HELLO_PAGES - {hl.PAGE_NAMES})
+    attach(monkeypatch, board)
+    assert hardware_probe.main(['']) == 0
+    out = capsys.readouterr().out
+    assert 'page 3' not in out
+    assert 'GP14   action 32   action 32  unlit' in out
+
+
+@pytest.mark.parametrize('kind, names, name', [(hl.KIND_CASE, {'LightType': {1: 'Case'}}, 'CASE'),
+                                               (hl.KIND_BUTTON, {'LightType': {0: 'ActionButton'}}, 'button'),
+                                               (7, {'LightType': {7: 'NewLight'}}, 'NewLight'),
+                                               (7, {}, 'kind 7')])
+def test_a_light_kind_is_named_by_a_profile_then_the_probe_then_the_firmware(kind, names, name):
+    """Test the order kind_name() names a light kind in."""
+    assert hardware_probe.kind_name(kind, names) == name
 
 
 def test_the_probe_exits_non_zero_when_the_tables_disagree(monkeypatch, capsys):

@@ -24,6 +24,8 @@ What is printed, in order:
 * Page 0 is identity, the board label and firmware version.
 * Page 1 is state, which gives whether a host frame is shown, the holder, and
   the CONFIGURE settings in force.
+* Page 3 gives the firmware's names for its actions and light kinds. An action
+  or kind no profile can name is shown by the firmware's name for it.
 * Page 8 is the Summary, which gives the LED extent and addressable limit, the
   render rate and colour format, and a change counter for each configuration
   page.
@@ -37,7 +39,8 @@ The two tables are then checked against the Summary's counts and against each
 other, and the probe exits non-zero if a check fails.
 
 `hlp-caps` in gp2040ce-hostlighting prints every page and field the protocol
-has. This prints the ones the bridge reads, as the bridge reads them.
+has. This prints the ones the bridge reads, as the bridge reads them, and
+page 3 to name what they show.
 
 Run it from the repository root:
 
@@ -60,11 +63,28 @@ def light_mark(record) -> str:
     return mark if record.owner.pin is None else f"{mark} on {key_name(record.owner.pin)}"
 
 
-def action_name(action) -> str:
-    """Name an action as a profile would, or by its value where a profile cannot name it."""
+def action_name(action, names=None) -> str:
+    """Name an action as a profile would, else by the firmware's name for it, else by its value.
+
+    :param action: the action's value, or None
+    :param names: page 3's names, as read_names() returns them
+    """
     if action is None:
         return 'none'
-    return hlp.control_name((hl.ADDRESSING_ACTION, action))
+    if (hl.ADDRESSING_ACTION, action) in hlp.CONTROL_NAMES:
+        return hlp.CONTROL_NAMES[(hl.ADDRESSING_ACTION, action)]
+    return (names or {}).get('GpioAction', {}).get(action, f"action {action}")
+
+
+def kind_name(kind, names=None) -> str:
+    """Name a light kind as a profile would, else as the probe does, else by the firmware's name for it.
+
+    :param kind: the kind's value
+    :param names: page 3's names, as read_names() returns them
+    """
+    if (hl.ADDRESSING_KIND, kind) in hlp.CONTROL_NAMES:
+        return hlp.CONTROL_NAMES[(hl.ADDRESSING_KIND, kind)]
+    return KIND_NAMES.get(kind) or (names or {}).get('LightType', {}).get(kind, f"kind {kind}")
 
 
 def describe_hello(hello) -> None:
@@ -119,16 +139,21 @@ def describe_summary(summary, counters) -> None:
     print(f"   change counters      {changes}")
 
 
-def describe_lights(records) -> None:
+def describe_names(names) -> None:
+    """Print how many names page 3 gives."""
+    print(f"\npage {hl.PAGE_NAMES}, names: {len(names.get('GpioAction', {}))} action(s), "
+          f"{len(names.get('LightType', {}))} light kind(s)")
+
+
+def describe_lights(records, names=None) -> None:
     """Print the Lights page grouped by what a profile would name each light by."""
     print(f"\npage {hl.PAGE_LIGHTS}, lights: {len(records)} record(s)")
     owners = {}
     for record in records:
         if record.kind.value == hl.KIND_BUTTON and record.owner.action is not None:
-            owner = action_name(record.owner.action)
+            owner = action_name(record.owner.action, names)
         else:
-            owner = hlp.CONTROL_NAMES.get((hl.ADDRESSING_KIND, record.kind.value),
-                                          KIND_NAMES.get(record.kind.value, f"kind {record.kind.value}"))
+            owner = kind_name(record.kind.value, names)
         owners.setdefault(owner, []).append(record)
     for owner, rows in owners.items():
         marks = ', '.join(light_mark(row) for row in rows)
@@ -136,13 +161,13 @@ def describe_lights(records) -> None:
         print(f"   {owner:10} x{len(rows):<3} {marks}{note}")
 
 
-def describe_controls(records) -> None:
+def describe_controls(records, names=None) -> None:
     """Print the Controls page one input per line, marking duplicated controls."""
     lit = sum(1 for record in records if record.input.lit)
     print(f"\npage {hl.PAGE_CONTROLS}, controls: {len(records)} record(s), {lit} lit, {len(records) - lit} unlit")
     for record in records:
         print(f"   {key_name(record.input.key):6} action {record.input.action:<4} "
-              f"{action_name(record.input.action):10} {'lit' if record.input.lit else 'unlit'}"
+              f"{action_name(record.input.action, names):10} {'lit' if record.input.lit else 'unlit'}"
               f"{' (duplicate)' if record.input.duplicated else ''}")
 
 
@@ -196,16 +221,20 @@ def main(argv=None) -> int:
             label, firmware = hlp.label_and_firmware(device)
             print(f"\npage {hl.PAGE_IDENTITY}, identity: {label} ({firmware})")
         describe_state(device.read_record(hl.PAGE_STATE, hlp.STATE_GROUPS))
+        names = {}
+        if hl.PAGE_NAMES in hello.pages:
+            names = device.read_names()
+            describe_names(names)
 
         # what a host would decide from all of the above
         caps = hlp.negotiate(device)
         describe_summary(caps.summary, caps.cache.counters)
-        describe_lights(caps.lights)
+        describe_lights(caps.lights, names)
         coherent = True
         if caps.controls is None:
             print(f"\npage {hl.PAGE_CONTROLS}, controls: this firmware does not list the page")
         else:
-            describe_controls(caps.controls)
+            describe_controls(caps.controls, names)
             for what, held in check_tables(caps.summary, caps.controls, caps.lights):
                 print(f"   check: {what}: {'coherent' if held else 'MISMATCH'}")
                 coherent = coherent and held
