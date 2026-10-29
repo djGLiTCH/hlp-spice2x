@@ -16,7 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
-## [0.6.0] - 2026-10-28
+## [0.6.0] - 2026-10-29
 
 This version speaks HLP v2.0 release candidate 10 (`HLP_v2.0-rc10`). It is a
 pre-release.
