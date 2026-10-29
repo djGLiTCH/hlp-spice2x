@@ -12,11 +12,14 @@ These exercise the wiring between arguments and behaviour, which is otherwise
 only covered by running the tool by hand.
 """
 import json
+import logging
+from importlib import metadata
 
 import pytest
 from gp2040ce_hostlighting.testing import attach
 
-from hlp_spice2x.__main__ import main
+from hlp_spice2x import __version__
+from hlp_spice2x.__main__ import COPYRIGHT, main
 
 from .boards import Board
 from .stub_server import StubServer
@@ -58,6 +61,18 @@ def test_profile_is_required():
     with pytest.raises(SystemExit) as caught:
         main([])
     assert caught.value.code == 2
+
+
+@pytest.mark.parametrize('option', ['-v', '--version'])
+def test_version_names_the_bridge_the_library_and_the_copyright(option, capsys):
+    """Test that --version names both versions and ends with the copyright, as the library's commands do."""
+    with pytest.raises(SystemExit) as caught:
+        main([option])
+    assert caught.value.code == 0
+    out = capsys.readouterr().out
+    library = metadata.version('gp2040ce-hostlighting')
+    assert out.startswith(f"hlp-spice2x {__version__} (gp2040ce-hostlighting {library}, Python ")
+    assert out.rstrip().endswith(f"{COPYRIGHT}.")
 
 
 def test_list_lights(server, capsys):
@@ -171,6 +186,29 @@ def test_the_bridge_runs_from_the_command_line_against_a_board(server, tmp_path,
     assert 'claim given up, on-board animations restored' in out
     assert board.frames and board.frames[0] == {4: (255, 0, 0)}
     assert board.holder_token == 0 and board.closed
+
+
+def test_debug_logs_the_reports_and_shows_each_reported_line_once(server, tmp_path, monkeypatch, capsys):
+    """Test that -d logs each report in hex to stderr and leaves the lines the bridge reports out of the log."""
+    board = Board()
+    attach(monkeypatch, board)
+    stub = server
+    handlers, level = list(logging.root.handlers), logging.root.level
+
+    import threading
+    import time
+    threading.Thread(target=lambda: (time.sleep(0.4), stub.stop()), daemon=True).start()
+    try:
+        assert main(['-d', '--port', str(stub.port), '--profile', profile_file(tmp_path)]) == 0
+    finally:
+        for handler in set(logging.root.handlers) - set(handlers):
+            logging.root.removeHandler(handler)
+        logging.root.setLevel(level)
+    captured = capsys.readouterr()
+    assert 'DEBUG [gp2040ce_hostlighting.trace] > ' in captured.err
+    assert 'DEBUG [gp2040ce_hostlighting.trace] < ' in captured.err
+    assert 'claim given up, on-board animations restored' in captured.out
+    assert 'claim given up' not in captured.err
 
 
 def test_a_board_held_by_another_application_is_an_error_naming_it(server, tmp_path, monkeypatch,

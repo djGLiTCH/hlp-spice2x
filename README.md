@@ -244,6 +244,8 @@ same control add together and clamp.
 | `--dry-run` | Print frames and drive no board. The HID interface is not opened. |
 | `--timeout MS` | Keepalive timeout, 100 to 10000 ms, default 2000. The board restores its animations when it hears nothing from the host for this long. |
 | `--force` | Take the board's lights over from another application that holds them. Without it the bridge stops. See [Sharing a board](#sharing-a-board). |
+| `-d`, `--debug` | Log to stderr at debug level, each report to and from the board in hex. The lines the bridge prints are left out of the log. |
+| `-v`, `--version` | Print the bridge's version, the gp2040ce-hostlighting and Python it runs on, and the copyright, then exit. |
 
 `--list-lights`, `--write-profile` and `--dry-run` talk to spice2x alone, so a
 profile can be built and checked on the game PC with no board attached. A dry

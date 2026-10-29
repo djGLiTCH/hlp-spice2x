@@ -61,8 +61,14 @@ class _ReportLines(logging.Handler):
         self.report = report
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Report one line, a warning marked as one."""
+        """Report one line, a warning marked as one, and mark the record reported."""
         self.report(("warning: " if record.levelno >= logging.WARNING else '') + record.getMessage())
+        record.reported = True
+
+
+def not_reported(record: logging.LogRecord) -> bool:
+    """Leave the lines the bridge has reported out of the debug log, so that -d shows each once."""
+    return not getattr(record, 'reported', False)
 
 
 def frame_for(frame, staging) -> Frame:
@@ -409,7 +415,8 @@ def run(connection, profile, device=None, fps=None, timeout_ms=2000,
     library = logging.getLogger('gp2040ce_hostlighting')
     lines, level = _ReportLines(report), library.level
     library.addHandler(lines)
-    library.setLevel(logging.INFO)
+    # INFO for the lines reported, or DEBUG when -d asked for it
+    library.setLevel(min(logging.INFO, library.getEffectiveLevel()))
 
     try:
         if device is not None:

@@ -28,6 +28,13 @@ pre-release.
   from 9 to 10 bytes. On such a board the bridge stops and names the page the
   firmware lays out differently. Update the board to an HLP v2.0 rc10 build.
 
+### Added
+
+- `-v` and `--version` name the bridge's version, the gp2040ce-hostlighting
+  and Python it runs on, and the copyright, as the library's commands do.
+- `-d` and `--debug` log to stderr at debug level, each report to and from the
+  board in hex, as the library's commands do.
+
 ### Changed
 
 - gp2040ce-hostlighting 1.0.0rc3 speaks release candidate 10. pip installs it
@@ -36,6 +43,8 @@ pre-release.
 - The bridge's messages, the README and `hardware_probe` name the Lights page
   as page 12.
 - Firmware and protocol links point at the `HLP_v2.0-rc10` tag.
+- The help for `--board-id` and `--timeout` uses the library's words, the
+  factory board ID and the keepalive timeout.
 - Each file opens with the header gp2040ce-hostlighting uses, naming the
   project, the file and its folder, the repository, the copyright and the
   licence. `LICENSE` and `LICENSES/GPL-3.0-or-later.txt` hold the FSF's plain

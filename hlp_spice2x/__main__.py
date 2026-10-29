@@ -8,12 +8,39 @@
 
 """Command line entry point."""
 import argparse
+import logging
 import sys
+from importlib import metadata
 
 from gp2040ce_hostlighting.protocol import HostLightingError, find_board, find_other_majors
 
-from . import bridge, hlp, profile as profile_module
+from . import __version__, bridge, hlp, profile as profile_module
 from .spiceapi import SpiceApiError, SpiceConnection
+
+COPYRIGHT = "Copyright (C) 2026 Jacob Simpson (DJ GLiTCH), GPL-3.0-or-later"
+# the debug log's format, the one gp2040ce-hostlighting's commands use
+LOG_FORMAT = '%(asctime)s %(levelname)8s [%(name)s] %(message)s'
+
+
+def version_text() -> str:
+    """Name the bridge's version and the gp2040ce-hostlighting and Python it runs on, then the copyright."""
+    try:
+        library = metadata.version('gp2040ce-hostlighting')
+    except metadata.PackageNotFoundError:
+        library = 'unknown'
+    return f"hlp-spice2x {__version__} (gp2040ce-hostlighting {library}, Python {sys.version}). {COPYRIGHT}."
+
+
+def start_debug_log() -> None:
+    """Send the log to stderr at DEBUG, the library's reports in hex included.
+
+    The lines the bridge reports itself are left out, so that each shows once.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(bridge.not_reported)
+    logging.root.addHandler(handler)
+    logging.root.setLevel(logging.DEBUG)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='hlp-spice2x',
         description="Bridge spice2x cabinet lighting onto a GP2040-CE board.")
+    parser.add_argument('-v', '--version', action='version', version=version_text(),
+                        help="show version information and exit")
+    parser.add_argument('-d', '--debug', action='store_true', help="enable debug logging")
     parser.add_argument("--host", default="127.0.0.1", help="spice2x API host (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=1337,
                         help="the port passed to spice2x's -api (default 1337, the usual choice, since "
@@ -34,11 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-boards", action="store_true",
                         help="list the attached boards and exit, taking none of them over")
     parser.add_argument("--board-id", default="",
-                        help="hex prefix of the board ID, to pick one of several")
+                        help="hex prefix of the factory board ID, to select one of several connected boards")
     parser.add_argument("--fps", type=float,
                         help="poll rate (default: the board's own render rate, capped at 120)")
     parser.add_argument("--timeout", type=int, default=2000,
-                        help="takeover keepalive timeout in ms (default 2000)")
+                        help="keepalive timeout in ms (default 2000)")
     parser.add_argument("--overlay", action="store_true",
                         help="overlay onto the board's animations instead of taking the whole frame")
     parser.add_argument("--full-brightness", action="store_true",
@@ -66,6 +96,8 @@ def main(argv=None) -> int:
     # the firmware clamps the timeout to this range, so a value outside it is refused here
     if not 100 <= args.timeout <= 10000:
         parser.error("--timeout must be between 100 and 10000 ms")
+    if args.debug:
+        start_debug_log()
 
     try:
         if args.list_boards:
