@@ -300,7 +300,7 @@ class LightsCheck:
         self.note(f"keepalive timeout 2000 ms, holding {hlp.control_name(steady)} amber for 8s")
         self.hold({('button', steady): AMBER}, staging, 8)
         state = self.device.read_record(hl.PAGE_STATE, hlp.STATE_GROUPS).records[0]
-        if not state.state.takeover_live or not state.controller.held_by(self.claim.token):
+        if not state.state.takeover_live or not state.holder.held_by(self.claim.token):
             self.fail("the takeover or the claim did not survive the hold")
 
 

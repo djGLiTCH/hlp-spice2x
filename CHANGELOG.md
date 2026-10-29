@@ -16,6 +16,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+### Changed
+
+- gp2040ce-hostlighting 1.0.0rc4 names page 1's group 1 Holder, where 1.0.0rc3
+  named it Controller. pip installs it with the bridge from its `v1.0.0rc4` tag
+  on GitHub until 1.0.0 is on PyPI, with HLP v2.0 final.
+- `hardware_lights` and `hardware_probe` read the claim from the Holder group.
+
 ## [0.6.0] - 2026-10-29
 
 This version speaks HLP v2.0 release candidate 10 (`HLP_v2.0-rc10`). It is a

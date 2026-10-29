@@ -50,7 +50,7 @@ NOT_HOST_LIGHTING = "handshake failed: this interface did not answer as a Host L
 
 # The groups read here, as GET_PAGE field masks. A mask always names its groups, since mask 0
 # also returns the groups a later board adds.
-STATE_GROUPS = 0x07             # State, Controller, Settings
+STATE_GROUPS = 0x07             # State, Holder, Settings
 SUMMARY_GROUPS = 0x03           # Summary, Changes
 CONTROL_GROUPS = 0x01           # key, action, flags
 LIGHT_GROUPS = 0x07             # LEDs, kind and flags, owner pin and action

@@ -86,16 +86,16 @@ def describe_hello(hello) -> None:
 def describe_state(read) -> None:
     """Print the decoded page 1."""
     record = read.records[0]
-    state, controller, settings = record.state, record.controller, record.settings
+    state, holder, settings = record.state, record.holder, record.settings
     print(f"\npage {hl.PAGE_STATE}, state:")
     print(f"   host frame shown     {state.takeover_live} (takeover number {state.takeover_number})")
     print(f"   input mode           {state.input_mode}")
     print(f"   profile              {state.profile}")
     print(f"   brightness step      {state.brightness_step_shown}")
-    holder = (f"'{controller.application_name}' (token 0x{controller.holder_token:08X}"
-              f"{', exclusive' if controller.exclusive else ''})"
-              if controller.holder_token else 'nobody')
-    print(f"   lights claimed by    {holder}, claim generation {controller.claim_generation}")
+    claimed_by = (f"'{holder.application_name}' (token 0x{holder.holder_token:08X}"
+                  f"{', exclusive' if holder.exclusive else ''})"
+                  if holder.holder_token else 'nobody')
+    print(f"   lights claimed by    {claimed_by}, claim generation {holder.claim_generation}")
     print(f"   takeover settings    {'overlay' if settings.takeover == hl.TAKEOVER_OVERLAY else 'whole frame'}, "
           f"{settings.keepalive_ms} ms keepalive, board brightness "
           f"{'applied' if settings.brightness_applied else 'ignored'}")
