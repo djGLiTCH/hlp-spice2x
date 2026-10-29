@@ -26,7 +26,7 @@ spice2x  --(Spice API, TCP/JSON)-->  hlp-spice2x  --(HID)-->  GP2040-CE board
 | `bridge.py` | The loop, on gp2040ce-hostlighting's `Session`. It polls the game, resolves a frame, stages and publishes it, and follows the board's state. |
 | `profile.py` | Profiles. It turns a JSON file into targets and colours, and a set of light levels into a frame. |
 | `spiceapi.py` | The game side, a minimal Spice API client with the RC4 the password option needs. |
-| `__main__.py` | The command line. It parses arguments, opens both ends, and passes them to the loop. |
+| `__main__.py` | The command line. It parses arguments, starts the debug log `-d` asks for, opens both ends, and passes them to the loop. |
 
 Dependencies run one way. `hlp.py` and `spiceapi.py` import no other module
 here, `profile.py` imports only `hlp.py`, and `bridge.py` imports `hlp.py` and

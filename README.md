@@ -75,13 +75,14 @@ The protocol is specified in [docs/host-lighting.md][spec].
 ## Requirements
 
 - A GP2040-CE board running firmware with the Host Lighting add-on, enabled
-  in the web configurator under Configuration, Add-Ons, Host Lighting. The
-  add-on is off by default and is not in an official release yet. See
-  [Firmware](#firmware).
+  in the web configurator under Configuration, Add-Ons Configuration, Host
+  Lighting. The add-on is off by default and is not in an official release
+  yet. See [Firmware](#firmware).
 - spice2x started with `-api PORT`, and with `-apipass PASS` where a password
   is wanted.
 - Python 3.14 or later, and [gp2040ce-hostlighting][hostlighting], which pip
-  installs with the bridge.
+  installs with the bridge. hidapi has no wheels for Python 3.15 yet, so on
+  3.15 pip builds it from source, which needs a C compiler.
 - Git, which pip uses to install the bridge and the library from GitHub.
 
 ## Firmware
@@ -184,7 +185,7 @@ The run reports what it read from the board, warns about anything in the
 profile this board cannot light, and prints a summary when it stops:
 
 ```
-1185 frames in 29.6s (40.0/s published), 0 frames unacknowledged
+1186 frames in 29.7s (40.0/s published), 0 frames unacknowledged
 claim given up, on-board animations restored
 ```
 
@@ -285,8 +286,9 @@ whether each light is addressed correctly, whether the staging order holds,
 and whether the whole program works from its own entry point.
 
 ```
-python -m tests.hardware_probe        # read-only, safe to run mid-game
-python -m tests.hardware_lights        # eleven phases, watched by eye
+python -m tests.hardware_probe     # read-only, safe to run mid-game
+python -m tests.hardware_lights    # eleven phases, watched by eye
+python -m tests.hardware_bridge    # the whole program for 30 s
 ```
 
 [tests/README.md](tests/README.md) describes each test file and how to run

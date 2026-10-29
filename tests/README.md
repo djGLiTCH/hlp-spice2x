@@ -41,7 +41,7 @@ them, and importing one runs nothing.
 | `test_staging.py` | How a frame reaches the board's lights: control names by action, the case strip by kind, one light by index, raw ranges, the white channel, the order the passes are emitted in, and which report is answered. Also the startup check that names controls the board lacks or cannot light. |
 | `test_loop_resilience.py` | The run loop against a board that changes, is shared, or stops answering: the claim and its renewal, another application taking the lights over and giving them up, a lapsed claim, a takeover that ended, a configuration change, an unacknowledged frame, and a board that leaves the bus and returns. |
 | `test_profile.py` | Profile parsing, the control names, and frame resolution. |
-| `test_cli.py` | Argument handling, `--list-boards`, and the paths that exit before connecting. |
+| `test_cli.py` | Argument handling, `--version`, the `--debug` log, `--list-boards`, and the paths that exit before connecting. |
 | `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection, NUL framing across repeated calls, and a game that closes the connection raising a ConnectionError, which the bridge treats as a normal ending. |
 | `test_device_errors.py` | Finding a board: the bridge's messages when no board, or more than one, can be chosen, the listing of the boards, and a frame or a run when the board goes away. |
 | `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe and its table checks, the whole lights check on the board's clock, and the profile the end-to-end check writes. |
@@ -113,7 +113,8 @@ board's own animations.
 The `hlp-*` commands of [gp2040ce-hostlighting][hostlighting] complement
 these. `hlp-conformance` shows that a board's firmware follows the protocol,
 `hlp-caps` prints every page it has, and `hlp-fill --exclusive` or
-`hlp-stream` is a second application to try the bridge against.
+`hlp-stream` is a second application to try the bridge against. The library's
+`hlp` command runs each as a subcommand, `hlp fill` for `hlp-fill`.
 
 ### hardware_probe.py
 
