@@ -29,7 +29,7 @@ PROFILE = {'P1 Button 1': (('button', T['B1']), RED)}
 # HELLO as the protocol reference's worked example gives it, captured from a Haute42 COSMOX with
 # keyboard mapping changes off, as they are by default, so SET_KEYBOARD_MAPPING (0x34) is not listed
 HELLO = bytes.fromhex('81 41 00 47 50 48 4c 02 00 433031343539302E 10 7f'
-                      '3e 00 0f 00 03 00 0f 00 00 00 00 00 00 00 03 00 0f 3f 00 00 f3 00 07 00 01 00 00 00'
+                      '3e 00 0f 00 03 00 0f 00 00 00 00 00 00 00 03 00 1f 3f 00 00 f3 00 07 00 01 00 00 00'
                       ).ljust(64, b'\x00')
 
 
@@ -101,6 +101,17 @@ def test_only_the_groups_the_bridge_uses_are_asked_for():
 def test_this_firmware_lacks_nothing_the_bridge_needs():
     """Test the capability check against the worked HELLO, for every addressing mode used."""
     assert hlp.lacking(hl.decode_hello(HELLO), {0, 4, 6, 7}) == []
+
+
+@pytest.mark.parametrize('pages', [HELLO_PAGES, HELLO_PAGES - {hl.PAGE_INPUT_MODES, hl.PAGE_BOOT_HOLDS}])
+def test_the_input_modes_and_boot_holds_are_neither_needed_nor_read(pages):
+    """Test that a board is driven alike with or without pages 2 and 4, which the bridge never reads."""
+    assert hlp.lacking(dataclasses.replace(hl.decode_hello(HELLO), pages=frozenset(pages)), {0, 4, 6, 7}) == []
+    board = Board(pages=pages)
+    assert 'warning' not in run_against(board)
+    assert {request[3] for request in board.sent(hl.CMD_GET_PAGE)}.isdisjoint({hl.PAGE_INPUT_MODES,
+                                                                               hl.PAGE_BOOT_HOLDS})
+    assert board.frames == [{4: RED}]
 
 
 def test_each_missing_capability_is_named():

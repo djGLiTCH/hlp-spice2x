@@ -591,6 +591,28 @@ def test_a_returning_board_whose_page_3_does_not_answer_is_tried_again(monkeypat
     assert len([device for device in opened if device is not None]) >= 2 and board.closed
 
 
+def test_a_returning_board_that_leaves_again_during_its_restart_is_waited_for_again(monkeypatch):
+    """Test a board in XInput Auto after a suspend: back, gone again mid page 3, then back with its PC detected."""
+    monkeypatch.setattr(bridge, 'RECONNECT_SECONDS', 0.0)
+    board = Board()
+
+    def leave_at_page_3(fake, request):
+        if request[0] == hl.CMD_GET_PAGE and request[3] == hl.PAGE_NAMES:
+            fake.hooks.remove(leave_at_page_3)
+            fake.unplug()
+
+    def back_then_gone():
+        board.replug()
+        board.hooks.append(leave_at_page_3)
+
+    text = run_with(board, ON, after(board.unplug, DIM), after(back_then_gone, DIM), DIM, after(board.replug, DIM),
+                    DIM, reopen=returning(board))
+    assert 'Traceback' not in text and leave_at_page_3 not in board.hooks
+    assert text.count('board: ') == 2
+    assert [claim[0] for claim in claims(board)] == [hl.CLAIM_TAKE, hl.CLAIM_TAKE, hl.CLAIM_GIVE_UP]
+    assert board.frames == [{0: RED}, {0: DIM_RED}]
+
+
 def test_a_returning_board_without_a_name_reports_it_and_lights_the_rest(monkeypatch):
     """Test that a name a returning board's firmware no longer has is named again and its entry drops out."""
     monkeypatch.setattr(bridge, 'RECONNECT_SECONDS', 0.0)

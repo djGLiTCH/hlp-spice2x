@@ -366,6 +366,20 @@ def test_a_control_the_firmware_has_no_name_for_is_reported_and_lights_nothing()
     assert board.frames == [{9: GREEN}]
 
 
+def test_a_name_page_3_gives_a_value_of_another_enum_is_not_a_control():
+    """Test that only actions and light kinds are controls, though page 3 names other enums' values too.
+
+    DPAD_MODE_LEFT_ANALOG is DpadMode value 1, which as an action would be Up.
+    """
+    board = m_ultra()
+    assert 'DPAD_MODE_LEFT_ANALOG' in board.open().read_names()['DpadMode'].values()
+    text = run_against(board, {'b2': (('button', T['B2']), GREEN),
+                               'dpad': (('button', (hlp.FIRMWARE, 'DPAD_MODE_LEFT_ANALOG')), BLUE)})
+    assert ("warning: 1 mapped control(s) are not in this board's firmware and light nothing: "
+            "DPAD_MODE_LEFT_ANALOG") in text
+    assert board.frames == [{9: GREEN}]
+
+
 def test_a_control_only_page_3_names_is_lit_from_a_loaded_profile(tmp_path):
     """Test that a profile can name an action the bridge has no short name for, by its firmware name."""
     board = Board(lights=[('B1', 0), ((hl.ADDRESSING_ACTION, 60), 1)])

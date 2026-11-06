@@ -16,6 +16,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+This version speaks HLP v2.0 release candidate 14 (`HLP_v2.0-rc14`). It is a
+pre-release. Release candidate 14 describes each input mode on page 2, adds the
+boot holds on page 4, and names more enums on page 3. The lighting commands and
+the pages the bridge reads are unchanged. In XInput Auto a bus reset after a
+suspend makes the board leave the bus and return, and the bridge waits for it
+as for a reboot.
+
+### Added
+
+- `hardware_probe` prints page 2's input modes, with whether `SET_INPUT_MODE`
+  accepts each, page 4's boot holds and whether the USB host peripheral is
+  enabled. It checks them against page 1 and each other, and prints how long
+  page 3 takes to read.
+
+### Changed
+
+- gp2040ce-hostlighting 1.0.0rc6 reads the new pages. pip installs it with the
+  bridge from its `v1.0.0rc6` tag on GitHub until 1.0.0 is on PyPI, with HLP
+  v2.0 final.
+- Firmware and protocol links point at the `HLP_v2.0-rc14` tag.
+
 ## [0.8.1] - 2026-10-30
 
 This version speaks HLP v2.0 release candidate 12 (`HLP_v2.0-rc12`). It is a

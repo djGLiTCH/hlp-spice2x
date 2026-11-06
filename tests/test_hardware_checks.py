@@ -16,7 +16,8 @@ import json
 
 import pytest
 from gp2040ce_hostlighting import protocol as hl
-from gp2040ce_hostlighting.testing import HELLO_COMMANDS, HELLO_PAGES, attach, control_record, summary_record
+from gp2040ce_hostlighting.testing import (HELLO_COMMANDS, HELLO_PAGES, attach, boot_hold_record, control_record,
+                                           input_mode_record, summary_record)
 
 from hlp_spice2x import hlp
 from hlp_spice2x import profile as profile_module
@@ -57,9 +58,63 @@ def test_the_probe_prints_a_board_and_finds_it_coherent(monkeypatch, capsys):
     assert 'GP14   action 32   BUTTON_PRESS_TURBO unlit' in out
     assert 'GP27   action 1    Up         lit (duplicate)' in out
     assert 'short names          38 of 38 on this firmware' in out
-    assert out.count('coherent') == 3 and 'MISMATCH' not in out
+    assert 'USB host peripheral  disabled' in out
+    assert 'page 2, input modes: 4 record(s), 3 accepted' in out
+    assert ('0    XInput                 accepted lighting once a PC is detected, USB host optional   <-- now'
+            in out)
+    assert '5    Xbox One               refused  no lighting, USB host required' in out
+    assert 'page 4, boot holds: 5 record(s)' in out
+    assert 'S1 + S2 + Up             boots UF2 bootloader' in out
+    assert 'B1                       boots PS4 (4)' in out
+    assert ' ms, as the bridge reads it before each claim' in out
+    assert out.count('coherent') == 7 and 'MISMATCH' not in out
     assert {request[0] for request in board.requests} == {hl.CMD_HELLO, hl.CMD_GET_PAGE}
     assert board.closed
+
+
+def test_the_probe_passes_a_board_without_pages_2_and_4(monkeypatch, capsys):
+    """Test that the probe, as the bridge, needs neither the input modes nor the boot holds."""
+    attach(monkeypatch, m_ultra(pages=HELLO_PAGES - {hl.PAGE_INPUT_MODES, hl.PAGE_BOOT_HOLDS}))
+    assert hardware_probe.main(['']) == 0
+    out = capsys.readouterr().out
+    assert 'page 2, input modes: this firmware does not list the page' in out
+    assert 'page 4, boot holds: this firmware does not list the page' in out
+    assert 'the bridge needs     nothing this board lacks' in out and 'MISMATCH' not in out
+
+
+def no_lighting_now(board):
+    """List the mode the board is in without the lighting interface."""
+    board.modes[0] = input_mode_record(0, b'XInput')
+
+
+def config_mode_listed(board):
+    """List the config mode."""
+    board.modes.append(input_mode_record(hl.INPUT_MODE_CONFIG, b'Config'))
+
+
+def host_mode_accepted(board):
+    """Accept Xbox One, which needs the USB host peripheral, while it is disabled."""
+    board.modes[3] = input_mode_record(5, b'Xbox One', usb_host=hl.INPUT_MODE_USB_HOST_REQUIRED)
+
+
+def hold_into_unlisted_mode(board):
+    """Add a boot hold into a mode page 2 does not list."""
+    board.boot_holds.append(boot_hold_record(hl.BOOT_HOLD_INPUT_MODE, 7, actions=(7,)))
+
+
+@pytest.mark.parametrize('fault, line', [
+    (no_lighting_now, 'the input mode now (0) is listed with the lighting interface: MISMATCH'),
+    (config_mode_listed, 'the config mode (255) is not listed: MISMATCH'),
+    (host_mode_accepted, '1 accepted mode(s) need the USB host peripheral, which is disabled: MISMATCH'),
+    (hold_into_unlisted_mode, 'boot holds into modes [7] that page 2 does not list: MISMATCH')])
+def test_the_probe_exits_non_zero_when_pages_2_and_4_disagree(monkeypatch, capsys, fault, line):
+    """Test each check of page 2 against page 1 and the Summary, and of page 4 against page 2."""
+    board = m_ultra()
+    fault(board)
+    attach(monkeypatch, board)
+    assert hardware_probe.main(['']) == 1
+    out = capsys.readouterr().out
+    assert f"check: {line}" in out and out.count('MISMATCH') == 1
 
 
 def test_the_probe_shows_an_action_page_3_does_not_name_by_its_value(monkeypatch, capsys):
@@ -131,7 +186,7 @@ def test_the_probe_with_no_board_says_where_to_get_firmware(monkeypatch, capsys)
     """Test that an empty enumeration fails and points at the firmware builds."""
     attach(monkeypatch)
     assert hardware_probe.main(['']) == 1
-    assert 'releases/tag/HLP_v2.0-rc12' in capsys.readouterr().out
+    assert 'releases/tag/HLP_v2.0-rc14' in capsys.readouterr().out
 
 
 def test_the_table_checks_hold_for_a_coherent_board():
@@ -151,7 +206,7 @@ def test_the_probe_finds_a_board_with_a_light_on_a_hall_effect_trigger_coherent(
     assert 'B1         x1   #0@LED4+1 on HE3' in out
     assert 'HE3    action 5    B1         lit' in out
     assert 'PCF1   action 7    B3         unlit' in out
-    assert out.count('coherent') == 3 and 'MISMATCH' not in out
+    assert out.count('coherent') == 7 and 'MISMATCH' not in out
 
 
 def test_a_lit_control_with_no_light_behind_it_is_a_mismatch():

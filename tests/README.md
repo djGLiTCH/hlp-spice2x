@@ -37,14 +37,14 @@ them, and importing one runs nothing.
 
 | File | What it covers |
 |---|---|
-| `test_capabilities.py` | What the bridge agrees to at connect: the major version, each capability it needs and each it can do without, `SET_KEYBOARD_MAPPING` among them, the minor version gating nothing, the Summary and its white channel flag, and reading again only the pages whose change counter moved. |
-| `test_staging.py` | How a frame reaches the board's lights: control names by action, the case strip by kind, one light by index, raw ranges, the white channel, the order the passes are emitted in, and which report is answered. Also each control resolved through page 3, a name only page 3 gives, and the startup checks that name controls the firmware or the board lacks or cannot light. |
-| `test_loop_resilience.py` | The run loop against a board that changes, is shared, or stops answering: the claim and its renewal, another application taking the lights over and giving them up, a lapsed claim, a takeover that ended, a configuration change, an unacknowledged frame, and a board that leaves the bus and returns, its page 3 names read again. |
+| `test_capabilities.py` | What the bridge agrees to at connect: the major version, each capability it needs and each it can do without, `SET_KEYBOARD_MAPPING` and pages 2 and 4 among them, the minor version gating nothing, the Summary and its white channel flag, and reading again only the pages whose change counter moved. |
+| `test_staging.py` | How a frame reaches the board's lights: control names by action, the case strip by kind, one light by index, raw ranges, the white channel, the order the passes are emitted in, and which report is answered. Also each control resolved through page 3, a name only page 3 gives, a name of page 3's other enums that names no control, and the startup checks that name controls the firmware or the board lacks or cannot light. |
+| `test_loop_resilience.py` | The run loop against a board that changes, is shared, or stops answering: the claim and its renewal, another application taking the lights over and giving them up, a lapsed claim, a takeover that ended, a configuration change, an unacknowledged frame, and a board that leaves the bus and returns, its page 3 names read again, or leaves again during its restart. |
 | `test_profile.py` | Profile parsing, the control names and the firmware's name for each, resolution through page 3, and frame resolution. |
 | `test_cli.py` | Argument handling, `--version`, the `--debug` log, `--list-boards`, and the paths that exit before connecting. |
 | `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection, NUL framing across repeated calls, and a game that closes the connection raising a ConnectionError, which the bridge treats as a normal ending. |
 | `test_device_errors.py` | Finding a board: the bridge's messages when no board, or more than one, can be chosen, the listing of the boards, and a frame or a run when the board goes away. |
-| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe, its table checks and the names it gives actions and light kinds, the whole lights check on the board's clock and its page 3 names, both checks on a board without `SET_KEYBOARD_MAPPING`, and the profile the end-to-end check writes. |
+| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe, its table checks, its checks of pages 2 and 4 and the names it gives actions and light kinds, the whole lights check on the board's clock and its page 3 names, both checks on a board without `SET_KEYBOARD_MAPPING`, and the profile the end-to-end check writes. |
 
 The protocol's transport, decoders, claim and `Session` are
 gp2040ce-hostlighting's, tested in its own suite.
@@ -135,11 +135,20 @@ It prints, as the bridge reads it:
 - the lights, grouped by control, with a note against any control that has
   more than one
 - the controls, one per line
+- the input modes on page 2, with whether `SET_INPUT_MODE` accepts each, its
+  lighting interface and its use of the USB host peripheral
+- the boot holds on page 4, the buttons or pins held at plug-in and what each
+  boots
+- how long page 3 takes to read, as the bridge reads it before each claim
 
 It names each action and light kind as a profile would, by its short name
 else by the firmware's name, and lists any short name the firmware lacks. It
-checks the two tables against the Summary's counts and against each other, and
-exits non-zero if a check fails.
+checks the two tables against the Summary's counts and against each other. It
+checks that page 2 leaves out the config mode, lists the mode the board is in
+with the lighting interface, and accepts a mode that needs the USB host
+peripheral only while it is enabled. It checks that each input mode page 4
+boots is one page 2 lists. It exits non-zero if a check fails. A board that
+does not list page 2 or page 4 is shown without it.
 
 Run it first against any board, and first when the bridge behaves
 unexpectedly. A board that does not list page 3 is shown as lacking it, and the

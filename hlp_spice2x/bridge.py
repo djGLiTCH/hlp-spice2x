@@ -321,9 +321,9 @@ def frame_stats(frames: int, misses: int, started: float) -> str:
 def names_before_claim(device):
     """Read a board's page 3 before anything is claimed, or give None where the board does not list it.
 
-    Page 3 is some 150 requests, about 0.3 s on the M Ultra on rc11, which is
-    longer than the shortest keepalive timeout. Read after the claim, it could
-    let the claim lapse before its first renewal.
+    Page 3 is one request per record, about 0.57 s on the M Ultra and the
+    COSMOX on rc14, which is longer than the shortest keepalive timeout. Read
+    after the claim, it could let the claim lapse before its first renewal.
 
     :param device: an opened HostLightingDevice
     :return: page 3's names, as read_names() returns them, or None
