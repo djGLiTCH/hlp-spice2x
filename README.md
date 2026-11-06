@@ -89,9 +89,9 @@ The protocol is specified in [docs/host-lighting.md][spec].
 
 Host Lighting is a proposed add-on, open upstream as [PR #1691][pr-1691].
 Until it merges the board needs a test build. This version needs an HLP v2.0
-release candidate 10 build or a later 2.0 candidate. Release candidate 9 and
-earlier lay out the pages differently and are not driven. The test builds are
-published with each [release candidate][rc14].
+release candidate 14 build or a later 2.0 candidate. Earlier candidates are
+not supported. The test builds are published with each
+[release candidate][rc14].
 
 There is a UF2 for every board GP2040-CE supports, with flashing and setup
 instructions. Enable the add-on in the web configurator once the board runs
@@ -111,7 +111,8 @@ everything else from the capabilities the board lists.
 | `CLAIM`, `CONFIGURE`, `STAGE`, `CLEAR`, the request flags, and pages 1, 3, 8 and 12 | Required. Without them the bridge stops and names what is missing. |
 | The addressing modes | Required as the profile uses them. A control name is staged by action. `CASE`, `TURBO`, `PLED1`-`PLED4` and any light kind named by its firmware name are staged by kind, an `index` by light and a `range` as an LED run. The modes are checked again once the names are resolved. |
 | Page 10, the controls | The startup warnings tell a mapped control the board does not have from one it has with no LED. |
-| Page 3, the names | The firmware's name for each action and kind of light. At startup, and when the board returns, the bridge looks up each control the profile names and stages it by the value the board's firmware gives it. A profile can use any of these names, so a control a later firmware adds needs no new bridge. A name the firmware does not have is reported and lights nothing. |
+| Page 3, the names | The firmware's name for each action and kind of light. At startup, and when the board returns, the bridge looks up each control the profile names and stages it by the value the board's firmware gives it. A profile can use any of these names, so a control a later firmware adds needs no new bridge. A name the firmware does not have is reported and lights nothing. Page 3's names of other values, such as D-pad modes and button layouts, name no control. |
+| Page 2, the input modes, and page 4, the boot holds | Not read. `hardware_probe` prints them. |
 | `SUBSCRIBE` and the `STATE_CHANGED` event | The bridge learns of a change on the board from an event. With or without them it reads page 1 at least once a second. |
 | The RGBW pixel format, on a chain the Summary flags as having a white channel | A white component in a profile colour is sent. |
 

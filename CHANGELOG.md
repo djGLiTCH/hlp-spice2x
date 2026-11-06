@@ -25,6 +25,11 @@ the pages the bridge reads are unchanged. In XInput Auto a bus reset after a
 suspend makes the board leave the bus and return, and the bridge waits for it
 as for a reboot.
 
+### Breaking
+
+- HLP v2.0 release candidate 14 or later is required. Earlier candidates are
+  not supported.
+
 ### Added
 
 - `hardware_probe` prints page 2's input modes, with whether `SET_INPUT_MODE`
