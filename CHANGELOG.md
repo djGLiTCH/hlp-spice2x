@@ -19,10 +19,10 @@ the major version is 0, a minor bump is where breaking changes go.
 ## [Unreleased]
 
 This version speaks HLP v2.0 release candidate 14 (`HLP_v2.0-rc14`). It is a
-pre-release. Release candidate 14 describes each input mode on page 2, adds the
-boot holds on page 4, and names more enums on page 3. The lighting commands and
-the pages the bridge reads are unchanged. In XInput Auto a bus reset after a
-suspend makes the board leave the bus and return, and the bridge waits for it
+pre-release. Release candidate 14 describes each input mode on page 2, names
+more enums on page 3, and adds the boot holds on page 4. The lighting commands
+and the pages the bridge reads are unchanged. In XInput Auto a bus reset after
+a suspend makes the board leave the bus and return, and the bridge waits for it
 as for a reboot.
 
 ### Breaking
