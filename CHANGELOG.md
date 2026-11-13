@@ -16,6 +16,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+This version speaks HLP v2.0 release candidate 18 (`HLP_v2.0-rc18`). It is a
+pre-release. Release candidate 18 adds a flags group to page 11, the keyboard
+mapping. Its first bit marks the buttons the keyboard interface sends as keys,
+which leave the controller's input. The bridge does not read page 11. The
+lighting commands and the pages the bridge reads are unchanged.
+
+### Breaking
+
+- HLP v2.0 release candidate 18 or later is required. Earlier candidates are
+  not supported.
+
+### Changed
+
+- gp2040ce-hostlighting 1.0.0rc8 reads page 11's flags. pip installs it with
+  the bridge from its `v1.0.0rc8` tag on GitHub until 1.0.0 is on PyPI, with
+  HLP v2.0 final.
+- Firmware and protocol links point at the `HLP_v2.0-rc18` tag.
+
 ## [0.9.1] - 2026-11-13
 
 This version speaks HLP v2.0 release candidate 17 (`HLP_v2.0-rc17`). It is a

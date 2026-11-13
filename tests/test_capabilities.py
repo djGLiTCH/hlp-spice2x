@@ -114,6 +114,15 @@ def test_the_input_modes_and_boot_holds_are_neither_needed_nor_read(pages):
     assert board.frames == [{4: RED}]
 
 
+def test_the_keyboard_mapping_is_not_read():
+    """Test that a board is driven alike while its keyboard interface sends buttons as keys, as page 11 flags."""
+    board = Board()
+    board.keyboard_mask = set(board.keyboard_actions)
+    assert 'warning' not in run_against(board)
+    assert hl.PAGE_KEYBOARD_MAPPING not in {request[3] for request in board.sent(hl.CMD_GET_PAGE)}
+    assert board.frames == [{4: RED}]
+
+
 def test_each_missing_capability_is_named():
     """Test that what a board does not list is named by kind and number."""
     hello = hl.decode_hello(HELLO)

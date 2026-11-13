@@ -89,9 +89,9 @@ The protocol is specified in [docs/host-lighting.md][spec].
 
 Host Lighting is a proposed add-on, open upstream as [PR #1691][pr-1691].
 Until it merges the board needs a test build. This version needs an HLP v2.0
-release candidate 17 build or a later 2.0 candidate. Earlier candidates are
+release candidate 18 build or a later 2.0 candidate. Earlier candidates are
 not supported. The test builds are published with each
-[release candidate][rc17].
+[release candidate][rc18].
 
 There is a UF2 for every board GP2040-CE supports, with flashing and setup
 instructions. Enable the add-on in the web configurator once the board runs
@@ -126,7 +126,7 @@ The bridge prints what it read at startup. This example is from a Haute42
 COSMOX M Ultra:
 
 ```
-board: Haute42|COSMOX M Ultra (v0.7.12-171-g109a4ac)
+board: Haute42|COSMOX M Ultra (v0.7.12-171-ga719ccf)
 board speaks HLP v2.0: 46 lights on 46 LEDs, renders at 40 Hz, GRB chain (white channel: no), state changes by event
 takeover: whole frame, 2000 ms keepalive, applying board brightness
 controls the board gives more than one light, all of which will be lit: L3, Up
@@ -335,6 +335,6 @@ part: the control names, what it requires of a board and its messages.
 [spice2x]: https://github.com/spice2x/spice2x.github.io
 [v0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.3.0
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
-[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc17/docs/host-lighting.md
+[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc18/docs/host-lighting.md
 [pr-1691]: https://github.com/OpenStickCommunity/GP2040-CE/pull/1691
-[rc17]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc17
+[rc18]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc18

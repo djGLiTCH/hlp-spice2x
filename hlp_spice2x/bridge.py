@@ -322,7 +322,7 @@ def names_before_claim(device):
     """Read a board's page 3 before anything is claimed, or give None where the board does not list it.
 
     Page 3 is one request per record, about 0.57 s on the M Ultra and the
-    COSMOX on rc17, which is longer than the shortest keepalive timeout. Read
+    COSMOX on rc18, which is longer than the shortest keepalive timeout. Read
     after the claim, it could let the claim lapse before its first renewal.
 
     :param device: an opened HostLightingDevice
