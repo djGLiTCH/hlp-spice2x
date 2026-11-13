@@ -60,9 +60,9 @@ def test_the_probe_prints_a_board_and_finds_it_coherent(monkeypatch, capsys):
     assert 'short names          38 of 38 on this firmware' in out
     assert 'USB host peripheral  disabled' in out
     assert 'page 2, input modes: 4 record(s), 3 accepted' in out
-    assert ('0    XInput                 accepted lighting once a PC is detected, USB host optional   <-- now'
-            in out)
-    assert '5    Xbox One               refused  no lighting, USB host required' in out
+    assert ('0    XInput                 primary      accepted lighting once a PC is detected, USB host optional'
+            '   <-- now' in out)
+    assert '5    Xbox One               primary      refused  no lighting, USB host required' in out
     assert 'page 4, boot holds: 5 record(s)' in out
     assert 'S1 + S2 + Up             boots UF2 bootloader' in out
     assert 'B1                       boots PS4 (4)' in out
@@ -80,6 +80,25 @@ def test_the_probe_passes_a_board_without_pages_2_and_4(monkeypatch, capsys):
     assert 'page 2, input modes: this firmware does not list the page' in out
     assert 'page 4, boot holds: this firmware does not list the page' in out
     assert 'the bridge needs     nothing this board lacks' in out and 'MISMATCH' not in out
+
+
+def test_the_probe_names_each_input_mode_category(monkeypatch, capsys):
+    """Test that each mode's category is named as the web configurator groups it, and one not known by its value."""
+    board = m_ultra()
+    board.modes[2] = input_mode_record(4, b'PS4', category=hl.INPUT_MODE_CATEGORY_SONY)
+    board.modes[3] = input_mode_record(5, b'Xbox One', accepted=0, category=hl.INPUT_MODE_CATEGORY_MICROSOFT)
+    board.modes.append(input_mode_record(15, b'Switch Pro', category=hl.INPUT_MODE_CATEGORY_NINTENDO))
+    board.modes.append(input_mode_record(11, b'PS Classic', category=hl.INPUT_MODE_CATEGORY_MINI))
+    board.modes.append(input_mode_record(20, b'Later', category=hl.INPUT_MODE_CATEGORY_MICROSOFT + 1))
+    attach(monkeypatch, board)
+    assert hardware_probe.main(['']) == 0
+    out = capsys.readouterr().out
+    assert '4    PS4                    Sony         accepted' in out
+    assert '5    Xbox One               Microsoft    refused ' in out
+    assert '15   Switch Pro             Nintendo     accepted' in out
+    assert '11   PS Classic             console mini accepted' in out
+    assert '20   Later                  category 5   accepted' in out
+    assert 'MISMATCH' not in out
 
 
 def no_lighting_now(board):
@@ -186,7 +205,7 @@ def test_the_probe_with_no_board_says_where_to_get_firmware(monkeypatch, capsys)
     """Test that an empty enumeration fails and points at the firmware builds."""
     attach(monkeypatch)
     assert hardware_probe.main(['']) == 1
-    assert 'releases/tag/HLP_v2.0-rc14' in capsys.readouterr().out
+    assert 'releases/tag/HLP_v2.0-rc17' in capsys.readouterr().out
 
 
 def test_the_table_checks_hold_for_a_coherent_board():

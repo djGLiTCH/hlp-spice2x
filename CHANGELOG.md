@@ -16,6 +16,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+This version speaks HLP v2.0 release candidate 17 (`HLP_v2.0-rc17`). It is a
+pre-release. Release candidate 17 groups page 2's input modes as the web
+configurator does, and names four more actions on page 3, the advanced SOCD
+slots. It adds a keyboard interface and the Lighting Report add-on, two USB
+functions, each off by default. With either on, the lighting interface has
+another interface number and device path, and the bridge finds the board as
+before. The lighting commands and the pages the bridge reads are unchanged.
+Release candidate 14 is still the minimum.
+
+### Added
+
+- `hardware_probe` names each input mode's group on page 2.
+- The README describes the Lighting Report add-on and how it and the bridge
+  share a board.
+
+### Changed
+
+- gp2040ce-hostlighting 1.0.0rc7 names the groups. pip installs it with the
+  bridge from its `v1.0.0rc7` tag on GitHub until 1.0.0 is on PyPI, with HLP
+  v2.0 final.
+- Firmware and protocol links point at the `HLP_v2.0-rc17` tag.
+
 ## [0.9.0] - 2026-11-06
 
 This version speaks HLP v2.0 release candidate 14 (`HLP_v2.0-rc14`). It is a

@@ -37,9 +37,10 @@ What is printed, in order:
   control's lights in the order they appear here.
 * Page 10 is the Controls page, with one record per control carrying an
   action, lit or not. A control it leaves out does not exist on the board.
-* Page 2 lists the input modes, with whether SET_INPUT_MODE accepts each, its
-  lighting interface and its use of the USB host peripheral. The bridge does
-  not read it.
+* Page 2 lists the input modes, with the web configurator's group for each,
+  whether SET_INPUT_MODE accepts it, its lighting interface and its use of the
+  USB host peripheral. A group the probe does not know is shown by its value.
+  The bridge does not read it.
 * Page 4 lists the boot holds, the buttons or pins held at plug-in that boot an
   input mode, the web configurator or the UF2 bootloader. A hold into a mode
   with the lighting interface is how to return to the bridge without a host.
@@ -71,6 +72,9 @@ KIND_NAMES = {0: 'button', 1: 'case', 2: 'turbo', 3: 'player 1', 4: 'player 2', 
 USB_HOST_USES = {hl.INPUT_MODE_USB_HOST_UNUSED: '', hl.INPUT_MODE_USB_HOST_OPTIONAL: ', USB host optional',
                  hl.INPUT_MODE_USB_HOST_REQUIRED: ', USB host required'}
 BOOT_KINDS = {hl.BOOT_HOLD_WEB_CONFIGURATOR: 'web configurator', hl.BOOT_HOLD_UF2_BOOTLOADER: 'UF2 bootloader'}
+CATEGORIES = {hl.INPUT_MODE_CATEGORY_PRIMARY: 'primary', hl.INPUT_MODE_CATEGORY_MINI: 'console mini',
+              hl.INPUT_MODE_CATEGORY_SONY: 'Sony', hl.INPUT_MODE_CATEGORY_NINTENDO: 'Nintendo',
+              hl.INPUT_MODE_CATEGORY_MICROSOFT: 'Microsoft'}
 
 
 def light_mark(record) -> str:
@@ -239,7 +243,9 @@ def describe_input_modes(records, current) -> None:
         mode = record.mode
         lighting = ('lighting once a PC is detected' if mode.detected else 'lighting') if mode.lighting else \
             'no lighting'
-        print(f"   {mode.value:<4} {record.name:22} {'accepted' if mode.accepted else 'refused '} {lighting}"
+        category = record.capabilities.category
+        print(f"   {mode.value:<4} {record.name:22} {CATEGORIES.get(category, f'category {category}'):12} "
+              f"{'accepted' if mode.accepted else 'refused '} {lighting}"
               f"{USB_HOST_USES.get(record.authentication.usb_host, '')}"
               f"{'   <-- now' if mode.value == current else ''}")
 

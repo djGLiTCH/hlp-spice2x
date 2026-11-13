@@ -91,7 +91,7 @@ Host Lighting is a proposed add-on, open upstream as [PR #1691][pr-1691].
 Until it merges the board needs a test build. This version needs an HLP v2.0
 release candidate 14 build or a later 2.0 candidate. Earlier candidates are
 not supported. The test builds are published with each
-[release candidate][rc14].
+[release candidate][rc17].
 
 There is a UF2 for every board GP2040-CE supports, with flashing and setup
 instructions. Enable the add-on in the web configurator once the board runs
@@ -271,9 +271,19 @@ In overlay mode the unmapped LEDs show the board's own animations. While those
 animations are idle, after the board's LED idle timeout, the unmapped LEDs are
 off. A press of a lit control wakes them.
 
-The bridge does not use spice2x's built-in HID lights feature. That feature
-expects a device declaring its lights in its HID descriptor, which cannot
-describe a board whose LED map the user configures.
+## Lighting Report add-on
+
+The bridge does not use spice2x's built-in HID lights feature. From HLP v2.0
+release candidate 17 the firmware's Lighting Report add-on, off by default,
+gives that feature a board to drive. It presents a red, green and blue HID
+output value for each light, named after the light and channel, such as
+`B1 R`. It needs neither the Host Lighting add-on nor the bridge, so for
+lights bound by name in spice2x it is the simpler choice.
+
+Both can be used on one board. While the bridge holds the lights, its frames
+show over the report's values. After the bridge gives the claim up, the board
+shows the report's last values, not its animations, until USB suspends or
+resets.
 
 ## Tests
 
@@ -325,6 +335,6 @@ part: the control names, what it requires of a board and its messages.
 [spice2x]: https://github.com/spice2x/spice2x.github.io
 [v0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.3.0
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
-[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc14/docs/host-lighting.md
+[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc17/docs/host-lighting.md
 [pr-1691]: https://github.com/OpenStickCommunity/GP2040-CE/pull/1691
-[rc14]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc14
+[rc17]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc17

@@ -44,7 +44,7 @@ them, and importing one runs nothing.
 | `test_cli.py` | Argument handling, `--version`, the `--debug` log, `--list-boards`, and the paths that exit before connecting. |
 | `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection, NUL framing across repeated calls, and a game that closes the connection raising a ConnectionError, which the bridge treats as a normal ending. |
 | `test_device_errors.py` | Finding a board: the bridge's messages when no board, or more than one, can be chosen, the listing of the boards, and a frame or a run when the board goes away. |
-| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe, its table checks, its checks of pages 2 and 4 and the names it gives actions and light kinds, the whole lights check on the board's clock and its page 3 names, both checks on a board without `SET_KEYBOARD_MAPPING`, and the profile the end-to-end check writes. |
+| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe, its table checks, its checks of pages 2 and 4 and the names it gives input mode groups, actions and light kinds, the whole lights check on the board's clock and its page 3 names, both checks on a board without `SET_KEYBOARD_MAPPING`, and the profile the end-to-end check writes. |
 
 The protocol's transport, decoders, claim and `Session` are
 gp2040ce-hostlighting's, tested in its own suite.
@@ -135,8 +135,9 @@ It prints, as the bridge reads it:
 - the lights, grouped by control, with a note against any control that has
   more than one
 - the controls, one per line
-- the input modes on page 2, with whether `SET_INPUT_MODE` accepts each, its
-  lighting interface and its use of the USB host peripheral
+- the input modes on page 2, with the web configurator's group for each,
+  whether `SET_INPUT_MODE` accepts it, its lighting interface and its use of
+  the USB host peripheral
 - the boot holds on page 4, the buttons or pins held at plug-in and what each
   boots
 - how long page 3 takes to read, as the bridge reads it before each claim
