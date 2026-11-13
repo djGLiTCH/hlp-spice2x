@@ -89,7 +89,7 @@ The protocol is specified in [docs/host-lighting.md][spec].
 
 Host Lighting is a proposed add-on, open upstream as [PR #1691][pr-1691].
 Until it merges the board needs a test build. This version needs an HLP v2.0
-release candidate 14 build or a later 2.0 candidate. Earlier candidates are
+release candidate 17 build or a later 2.0 candidate. Earlier candidates are
 not supported. The test builds are published with each
 [release candidate][rc17].
 
@@ -126,7 +126,7 @@ The bridge prints what it read at startup. This example is from a Haute42
 COSMOX M Ultra:
 
 ```
-board: Haute42|COSMOX M Ultra (v0.7.12-157-ga41383f)
+board: Haute42|COSMOX M Ultra (v0.7.12-171-g109a4ac)
 board speaks HLP v2.0: 46 lights on 46 LEDs, renders at 40 Hz, GRB chain (white channel: no), state changes by event
 takeover: whole frame, 2000 ms keepalive, applying board brightness
 controls the board gives more than one light, all of which will be lit: L3, Up
@@ -273,12 +273,12 @@ off. A press of a lit control wakes them.
 
 ## Lighting Report add-on
 
-The bridge does not use spice2x's built-in HID lights feature. From HLP v2.0
-release candidate 17 the firmware's Lighting Report add-on, off by default,
-gives that feature a board to drive. It presents a red, green and blue HID
-output value for each light, named after the light and channel, such as
-`B1 R`. It needs neither the Host Lighting add-on nor the bridge, so for
-lights bound by name in spice2x it is the simpler choice.
+The bridge does not use spice2x's built-in HID lights feature. The firmware's
+Lighting Report add-on, off by default, gives that feature a board to drive. It
+presents a red, green and blue HID output value for each light, named after
+the light and channel, such as `B1 R`. It needs neither the Host Lighting
+add-on nor the bridge, so for lights bound by name in spice2x it is the simpler
+choice.
 
 Both can be used on one board. While the bridge holds the lights, its frames
 show over the report's values. After the bridge gives the claim up, the board

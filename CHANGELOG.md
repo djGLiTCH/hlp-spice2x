@@ -25,7 +25,11 @@ slots. It adds a keyboard interface and the Lighting Report add-on, two USB
 functions, each off by default. With either on, the lighting interface has
 another interface number and device path, and the bridge finds the board as
 before. The lighting commands and the pages the bridge reads are unchanged.
-Release candidate 14 is still the minimum.
+
+### Breaking
+
+- HLP v2.0 release candidate 17 or later is required. Earlier candidates are
+  not supported.
 
 ### Added
 
