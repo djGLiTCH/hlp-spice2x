@@ -5,6 +5,10 @@
     "P1 Button 3": { "button": "B3", "colour": "0000FF" },
     "P1 Start":    { "button": "S2", "colour": "FFAA00" },
     "P1 Extra Up": { "button": "UP", "index": 1, "colour": "00FFFF" },
-    "Neon Left":   { "range": [16, 30], "colour": "FF00FF" }
+    "Neon Left":   { "range": [16, 30], "colour": "FF00FF" },
+    "Woofer B":    { "button": "E2", "channel": "B" },
+    "Top Panel":   { "button": "E1", "channels": { "R": "Top Panel R",
+                                                   "G": "Top Panel G",
+                                                   "B": "Top Panel B" } }
   }
 }

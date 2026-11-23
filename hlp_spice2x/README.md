@@ -83,6 +83,11 @@ board. `('range', 16, 30)` names raw LED
 indexes. The three differ in portability and in how they fail, which
 `profiles/README.md` covers.
 
+A `channel` entry and a fixture entry are read into these same targets.
+`profile.load` gives a channel its primary colour and turns a fixture into
+one entry per channel, keyed by the game's light name. The rest of the
+bridge sees only lights with a target and a colour.
+
 ### Frames and staging
 
 A frame is at the level of controls, and staging is at the level of the

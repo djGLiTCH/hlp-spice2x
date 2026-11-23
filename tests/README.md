@@ -40,11 +40,11 @@ them, and importing one runs nothing.
 | `test_capabilities.py` | What the bridge agrees to at connect: the major version, each capability it needs and each it can do without, `SET_KEYBOARD_MAPPING` and pages 2 and 4 among them, page 11 not read whichever buttons the keyboard interface sends as keys, the minor version gating nothing, the Summary and its white channel flag, and reading again only the pages whose change counter moved. |
 | `test_staging.py` | How a frame reaches the board's lights: control names by action, the case strip by kind, one light by index, raw ranges, the white channel, the order the passes are emitted in, and which report is answered. Also each control resolved through page 3, a name only page 3 gives, a name of page 3's other enums that names no control, and the startup checks that name controls the firmware or the board lacks or cannot light. |
 | `test_loop_resilience.py` | The run loop against a board that changes, is shared, or stops answering: the claim and its renewal, another application taking the lights over and giving them up, a lapsed claim, a takeover that ended, a configuration change, an unacknowledged frame, and a board that leaves the bus and returns, its page 3 names read again, or leaves again during its restart. |
-| `test_profile.py` | Profile parsing, the control names and the firmware's name for each, resolution through page 3, and frame resolution. |
-| `test_cli.py` | Argument handling, `--version`, the `--debug` log, `--list-boards`, and the paths that exit before connecting. |
-| `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection, NUL framing across repeated calls, and a game that closes the connection raising a ConnectionError, which the bridge treats as a normal ending. |
+| `test_profile.py` | Profile parsing, channels and fixtures, the grouping the skeleton writes, the control names and the firmware's name for each, resolution through page 3, and frame resolution. |
+| `test_cli.py` | Argument handling, `--version`, the `--debug` log, `--list-boards`, fixtures in `--list-lights` and `--write-profile`, and the paths that exit before connecting. |
+| `test_spiceapi.py` | The Spice API client against the stub server: one RC4 keystream per connection, NUL framing across repeated calls, a light state that is not a number, and a game that closes the connection raising a ConnectionError, which the bridge treats as a normal ending. |
 | `test_device_errors.py` | Finding a board: the bridge's messages when no board, or more than one, can be chosen, the listing of the boards, and a frame or a run when the board goes away. |
-| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe, its table checks, its checks of pages 2 and 4 and the names it gives input mode groups, actions and light kinds, the whole lights check on the board's clock and its page 3 names, both checks on a board without `SET_KEYBOARD_MAPPING`, and the profile the end-to-end check writes. |
+| `test_hardware_checks.py` | The hardware checks below, run against the model board: the probe, its table checks, its checks of pages 2 and 4 and the names it gives input mode groups, actions and light kinds, the whole lights check on the board's clock and its page 3 names, both checks on a board without `SET_KEYBOARD_MAPPING`, and the profiles the end-to-end and fixture checks write. |
 
 The protocol's transport, decoders, claim and `Session` are
 gp2040ce-hostlighting's, tested in its own suite.
@@ -208,6 +208,23 @@ Two things to watch:
   first, a light holding a colour from the previous run in the first second
   is a pixel that was not staged.
 
+### hardware_fixture.py
+
+```
+python -m tests.hardware_fixture
+```
+
+This check shows two RGB fixtures, each driven as three lights as some games
+do. It runs the whole program as `hardware_bridge.py` does, for 17 s. The
+profile it writes maps the fixtures to the board's first two controls:
+
+- the first by a fixture entry, whose one button maps all three lights
+- the second by three `channel` entries, one per light
+
+Both fixtures step through eight colours a watcher can tell apart, and the
+check prints each step as it starts. The two always show contrasting colours,
+so a swap between them shows as well.
+
 ## Which to run
 
 | Situation | Run |
@@ -216,6 +233,7 @@ Two things to watch:
 | A new board | `python -m tests.hardware_probe` |
 | A change to how frames are staged, or to the order of the passes | `python -m tests.hardware_lights` |
 | A change to the run loop, the claim handling, the command line or profile loading | `python -m tests.hardware_bridge`, twice |
+| A change to channels or fixtures | `python -m tests.hardware_fixture`, watched |
 | A board behaving unexpectedly | `hardware_probe` first, then the check closest to the behaviour |
 
 A board is not required to contribute. The automated suite runs the bridge

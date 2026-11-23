@@ -347,6 +347,207 @@ def test_every_profile_name_maps_to_its_action_or_kind():
     assert len(targets) == 38
 
 
+# Names as DDR and SDVX report them. FX-R ends in R for right and BT-B is the
+# B button, after a hyphen, and neither has the other two channels.
+GAME_LIGHTS = ['GOLD P1 Card Unit B', 'GOLD P1 Card Unit G', 'GOLD P1 Card Unit R',
+               'HD P1 Speaker W B', 'HD P1 Speaker W G', 'HD P1 Speaker W R',
+               'GOLD Top Panel Avg B', 'GOLD Top Panel Avg G', 'GOLD Top Panel Avg R',
+               'P1 Foot Right', 'Spot Red', 'Neon', 'FX-L', 'FX-R', 'BT-A', 'BT-B']
+
+
+@pytest.mark.parametrize('channel, colour', [('R', (0xFF, 0, 0)), ('g', (0, 0xFF, 0)),
+                                             (' B ', (0, 0, 0xFF)), ('W', (0xFF, 0xFF, 0xFF))])
+def test_a_channel_entry_takes_its_primary_colour(tmp_path, channel, colour):
+    """Test that a channel is read as its colour, W as a six-digit white so that it needs no white chain."""
+    profile, _ = profile_module.load(write(tmp_path, {'Woofer': {'button': 'E1', 'channel': channel}}))
+    assert profile['Woofer'] == (('button', (6, 43)), colour)
+
+
+@pytest.mark.parametrize('entry, match', [
+    ({'button': 'E1', 'channel': 'R', 'colour': 'FF0000'}, 'not both'),
+    ({'button': 'E1', 'channel': 'R', 'color': 'FF0000'}, 'not both'),
+    ({'button': 'E1', 'channel': 'red'}, 'R, G, B or W'),
+    ({'button': 'E1', 'channel': 1}, 'R, G, B or W'),
+])
+def test_a_channel_that_cannot_be_read_is_refused(tmp_path, entry, match):
+    """Test that a channel with a colour as well, or one that is not R, G, B or W, fails at load."""
+    with pytest.raises(profile_module.ProfileError, match=match):
+        profile_module.load(write(tmp_path, {'Woofer R': entry}))
+
+
+@pytest.mark.parametrize('entry, match', [
+    ({'button': '', 'channel': 'bogus'}, 'R, G, B or W'),
+    ({'button': '', 'channel': 'R', 'colour': 'FF0000'}, 'not both'),
+])
+def test_a_channel_is_read_before_its_button_is_filled_in(tmp_path, entry, match):
+    """Test that an unmapped light's channel is checked, as an unmapped fixture's channels are."""
+    with pytest.raises(profile_module.ProfileError, match=match):
+        profile_module.load(write(tmp_path, {'Woofer R': entry, 'b': {'button': 'B1'}}))
+
+
+def test_an_unmapped_lights_colour_is_not_read_as_in_1_0(tmp_path):
+    """Test that a bad colour on an unmapped light is still passed over, so a 1.0 profile loads as it did."""
+    profile, _ = profile_module.load(write(tmp_path, {'a': {'button': '', 'colour': 'purple'},
+                                                      'b': {'button': 'B1'}}))
+    assert set(profile) == {'b'}
+
+
+def test_a_fixture_maps_each_of_its_lights_to_one_target(tmp_path):
+    """Test that a fixture becomes one entry per channel, keyed by the game's light name."""
+    path = write(tmp_path, {'Top Panel': {'button': 'S2', 'channels': {
+        'R': 'Top Panel R', 'G': 'Top Panel G', 'B': 'Top Panel B'}}})
+    profile, _ = profile_module.load(path)
+    assert profile == {'Top Panel R': (('button', (6, 14)), (0xFF, 0, 0)),
+                       'Top Panel G': (('button', (6, 14)), (0, 0xFF, 0)),
+                       'Top Panel B': (('button', (6, 14)), (0, 0, 0xFF))}
+
+
+def test_a_fixture_shows_the_colour_the_game_mixes(tmp_path):
+    """Test that a fixture's channels add on its target to the game's colour."""
+    path = write(tmp_path, {'Woofer': {'button': 'B1', 'channels': {'R': 'Woofer R', 'G': 'Woofer G',
+                                                                    'B': 'Woofer B'}}})
+    profile, _ = profile_module.load(path)
+    frame = profile_module.resolve_frame({'Woofer R': 1.0, 'Woofer G': 0.5, 'Woofer B': 0.0}, profile)
+    assert frame == {('button', (6, 5)): (0xFF, 127, 0)}
+
+
+def test_a_fixture_takes_an_index_or_a_range(tmp_path):
+    """Test that a fixture is shown wherever a light entry could be."""
+    channels = {'R': 'a R', 'G': 'a G', 'B': 'a B'}
+    profile, _ = profile_module.load(write(tmp_path, {
+        'a': {'button': 'UP', 'index': 1, 'channels': channels},
+        'b': {'range': [16, 4], 'channels': {'R': 'b R', 'G': 'b G', 'B': 'b B'}}}))
+    assert profile['a G'] == (('light', (6, 1), 1), (0, 0xFF, 0))
+    assert profile['b B'] == (('range', 16, 4), (0, 0, 0xFF))
+
+
+@pytest.mark.parametrize('extra', [{'colour': 'FF0000'}, {'color': 'FF0000'}, {'channel': 'R'}])
+def test_a_fixture_with_a_colour_of_its_own_is_refused(tmp_path, extra):
+    """Test that a fixture's colours come only from its channels."""
+    entry = {'button': 'B1', 'channels': {'R': 'a R', 'G': 'a G', 'B': 'a B'}, **extra}
+    with pytest.raises(profile_module.ProfileError, match="takes its colours from 'channels'"):
+        profile_module.load(write(tmp_path, {'a': entry}))
+
+
+@pytest.mark.parametrize('channels, match', [
+    ({}, "must map R, G, B or W"),
+    (['a R', 'a G'], "must map R, G, B or W"),
+    ({'X': 'a X'}, 'R, G, B or W'),
+    ({'R': 'a R', 'r': 'a r'}, 'given twice'),
+    ({'R': ''}, 'must name a light'),
+    ({'R': '  '}, 'must name a light'),
+    ({'R': 7}, 'must name a light'),
+    ({'R': 'a', 'G': 'a'}, 'named by two channels'),
+])
+def test_a_fixture_that_cannot_be_read_is_refused(tmp_path, channels, match):
+    """Test that a malformed fixture fails at load, even before its button is filled in."""
+    with pytest.raises(profile_module.ProfileError, match=match):
+        profile_module.load(write(tmp_path, {'a': {'button': '', 'channels': channels},
+                                             'b': {'button': 'B1'}}))
+
+
+def test_an_unfilled_fixture_is_skipped(tmp_path):
+    """Test that a fixture with an empty button maps nothing, as an unfilled light does."""
+    profile, warnings = profile_module.load(write(tmp_path, {
+        'a': {'button': '', 'channels': {'R': 'a R', 'G': 'a G', 'B': 'a B'}},
+        'a R': {'button': 'B2', 'channel': 'R'}}))
+    assert set(profile) == {'a R'}
+    assert not warnings
+
+
+@pytest.mark.parametrize('lights', [
+    {'a': {'button': 'B1', 'channels': {'R': 'a R', 'G': 'a G', 'B': 'a B'}},
+     'a R': {'button': 'B2', 'channel': 'R'}},
+    {'a R': {'button': 'B2', 'channel': 'R'},
+     'a': {'button': 'B1', 'channels': {'R': 'a R', 'G': 'a G', 'B': 'a B'}}},
+    {'a': {'button': 'B1', 'channels': {'R': 'a R', 'G': 'a G', 'B': 'a B'}},
+     'b': {'button': 'B2', 'channels': {'R': 'a R', 'G': 'b G', 'B': 'b B'}}},
+])
+def test_a_light_mapped_by_two_entries_is_refused(tmp_path, lights):
+    """Test that a fixture's light given a second mapping fails, whichever comes first."""
+    with pytest.raises(profile_module.ProfileError, match="'a R' is mapped by two entries"):
+        profile_module.load(write(tmp_path, lights))
+
+
+@pytest.mark.parametrize('text, key', [
+    ('{"lights": {"A": {"button": "B1"}, "A": {"button": "B2"}}}', 'A'),
+    ('{"lights": {"A": {"button": "B1", "button": "B2"}}}', 'button'),
+    ('{"lights": {"F": {"button": "B2", "channels": {"R": "x", "G": "y", "B": "z", "R": "w"}}}}', 'R'),
+])
+def test_a_key_given_twice_in_one_object_warns_and_the_last_is_used(tmp_path, text, key):
+    """Test that a repeated key, which JSON drops without a word, is named in a warning.
+
+    The last one is used, as in 1.0, so a profile that loaded before loads alike.
+    """
+    path = tmp_path / 'profile.json'
+    path.write_text(text, encoding='utf-8')
+    profile, warnings = profile_module.load(str(path))
+    assert warnings == [f"'{key}' is given twice in one object of the profile, and only the last is used"]
+    target = profile.get('A', profile.get('w'))[0]
+    assert target == ('button', (6, 6))
+
+
+def test_a_profile_without_a_repeated_key_gives_no_warning(tmp_path):
+    """Test that keys repeated only across different objects are not mistaken for a repeat."""
+    profile, warnings = profile_module.load(write(tmp_path, {'A': {'button': 'B1'}, 'B': {'button': 'B2'}}))
+    assert set(profile) == {'A', 'B'} and not warnings
+
+
+def test_a_fixture_without_button_or_range_warns_by_its_name(tmp_path):
+    """Test that the missing-keys warning names the fixture, not each of its lights."""
+    profile, warnings = profile_module.load(write(tmp_path, {
+        'a': {'buton': 'B1', 'channels': {'R': 'a R', 'G': 'a G', 'B': 'a B'}}, 'b': {'button': 'B1'}}))
+    assert set(profile) == {'b'}
+    assert warnings == ["fixture 'a' has no 'button' or 'range' key, ignoring"]
+
+
+def test_fixtures_are_found_only_where_red_green_and_blue_are_all_present():
+    """Test the grouping against a game's real names.
+
+    FX-R, BT-B and Spot Red are not channels, and HD P1 Speaker W is a fixture whose
+    W is part of its name and not a channel of its own.
+    """
+    assert profile_module.find_fixtures(GAME_LIGHTS) == {
+        'GOLD P1 Card Unit': {'R': 'GOLD P1 Card Unit R', 'G': 'GOLD P1 Card Unit G',
+                              'B': 'GOLD P1 Card Unit B'},
+        'GOLD Top Panel Avg': {'R': 'GOLD Top Panel Avg R', 'G': 'GOLD Top Panel Avg G',
+                               'B': 'GOLD Top Panel Avg B'},
+        'HD P1 Speaker W': {'R': 'HD P1 Speaker W R', 'G': 'HD P1 Speaker W G',
+                            'B': 'HD P1 Speaker W B'}}
+
+
+@pytest.mark.parametrize('names, expected', [
+    (['Wing R', 'Wing G'], {}),
+    (['WingR', 'WingG', 'WingB', 'WingW'], {'Wing': {'R': 'WingR', 'G': 'WingG', 'B': 'WingB', 'W': 'WingW'}}),
+    (['Wing_R', 'Wing_G', 'Wing_B'], {'Wing': {'R': 'Wing_R', 'G': 'Wing_G', 'B': 'Wing_B'}}),
+    (['Wing', 'Wing R', 'Wing G', 'Wing B'], {'Wing RGB': {'R': 'Wing R', 'G': 'Wing G', 'B': 'Wing B'}}),
+    (['Wing', 'Wing RGB', 'Wing R', 'Wing G', 'Wing B'], {}),
+    (['Wing W'], {}),
+])
+def test_fixture_grouping_and_naming(names, expected):
+    """Test the separators, a W that joins a group, and the name taken when a light already has it."""
+    assert profile_module.find_fixtures(names) == expected
+
+
+def test_the_skeleton_writes_a_fixture_as_one_entry(tmp_path):
+    """Test that the skeleton groups a fixture's lights, and loads once its one button is filled in."""
+    path = tmp_path / 'skeleton.json'
+    fixtures = profile_module.write_skeleton(str(path), GAME_LIGHTS)
+    written = json.loads(path.read_text(encoding='utf-8'))['lights']
+    assert set(fixtures) == {'GOLD P1 Card Unit', 'GOLD Top Panel Avg', 'HD P1 Speaker W'}
+    assert written['GOLD P1 Card Unit'] == {'button': '', 'channels': fixtures['GOLD P1 Card Unit']}
+    assert written['FX-R'] == written['BT-B'] == {'button': '', 'colour': 'FFFFFF'}
+    assert 'GOLD P1 Card Unit R' not in written
+    assert list(written) == sorted(written)
+    assert len(written) == len(GAME_LIGHTS) - 6
+
+    written['GOLD P1 Card Unit']['button'] = 'B1'
+    path.write_text(json.dumps({'lights': written}), encoding='utf-8')
+    profile, _ = profile_module.load(str(path))
+    assert profile['GOLD P1 Card Unit G'] == (('button', (6, 5)), (0, 0xFF, 0))
+    assert set(profile) == {'GOLD P1 Card Unit R', 'GOLD P1 Card Unit G', 'GOLD P1 Card Unit B'}
+
+
 def test_a_control_is_named_back_as_the_profile_wrote_it():
     """Test the reverse mapping, and a value with no name."""
     assert hlp.control_name(hlp.CONTROL_TARGETS['L3']) == 'L3'

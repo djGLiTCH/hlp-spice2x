@@ -30,13 +30,18 @@ hlp-spice2x --port 1337 --list-lights
 This prints every light and its current value. Pressing buttons while
 watching the values shows which name is which.
 
+Where a fixture's red, green and blue are three lights, the list shows them
+on one line as the fixture, with each channel's value.
+
 Write a skeleton listing every light:
 
 ```
 hlp-spice2x --port 1337 --write-profile mygame.json
 ```
 
-Fill in the `button` field of each light to map and leave the rest empty.
+The skeleton writes each fixture as one entry, set out under
+[Fixtures](#fixtures). Fill in the `button` field of each light or fixture
+to map and leave the rest empty.
 Check the result with no board:
 
 ```
@@ -54,7 +59,11 @@ board attached.
   "lights": {
     "P1 Button 1": { "button": "B1", "colour": "FF0000" },
     "P1 Extra Up": { "button": "UP", "index": 1, "colour": "00FFFF" },
-    "Neon Left":   { "range": [16, 30], "colour": "FF00FF" }
+    "Neon Left":   { "range": [16, 30], "colour": "FF00FF" },
+    "Woofer B":    { "button": "E2", "channel": "B" },
+    "Top Panel":   { "button": "E1", "channels": { "R": "Top Panel R",
+                                                   "G": "Top Panel G",
+                                                   "B": "Top Panel B" } }
   }
 }
 ```
@@ -103,6 +112,23 @@ Cabinet lights are mostly single-colour, so the game reports an intensity
 from 0.0 to 1.0 and the profile supplies the colour. Two lights mapped to the
 same control add together and clamp.
 
+`colour` is for these intensity lights. A light that is one channel of an
+RGB fixture takes a `channel` or belongs to a fixture entry instead.
+
+### channel
+
+`channel` marks a light as one channel of a fixture, in place of a `colour`:
+
+```json
+"Woofer R": { "button": "E1", "channel": "R" }
+```
+
+A channel is `R`, `G`, `B` or `W`, in upper or lower case. It lights in that
+primary colour, scaled by how brightly the game drives it. `W` is sent as a
+six-digit white, which works on any chain. On a white chain the firmware
+moves a pure grey onto the white emitter. An entry with both a `channel` and
+a `colour` is refused.
+
 ### Portability
 
 | Form | Portability |
@@ -110,6 +136,8 @@ same control add together and clamp.
 | `button` | Any board. The board resolves the name against its own configuration. |
 | `index` | The control name is portable and the index is not. On another board it can pick a different light, and nothing reports it. |
 | `range` | One board. Raw LED indexes depend on that board's layout. |
+
+A `channel` entry or a fixture is as portable as the form it is mapped by.
 
 ## Reading a board's lights
 
@@ -125,6 +153,41 @@ It is read-only and can run while a game is running. It prints the board's
 Lights page grouped by control and marks any control with more than one
 light, which an `index` entry needs. It also prints the Controls page, every
 control the board has, lit or not.
+
+## Fixtures
+
+Some games drive an RGB fixture as three lights, its red, green and blue. A
+fixture entry maps all three to one place:
+
+```json
+"WHITE Woofer": {
+  "button": "E1",
+  "channels": {
+    "R": "WHITE Woofer R",
+    "G": "WHITE Woofer G",
+    "B": "WHITE Woofer B"
+  }
+}
+```
+
+The entry's own name is a label, and `channels` gives the game's light for
+each channel. The fixture takes a `button`, an `index` or a `range` as a
+light does. It takes no `colour`, since each channel lights in its own. The
+channels add together, so the fixture shows the colour the game mixes.
+
+The skeleton groups a fixture when the game has its R, G and B lights:
+
+- Each name is the same up to a last letter of `R`, `G` or `B`.
+- A space, an underscore, a hyphen or nothing comes before the letter.
+- A `W` light with the same name before the letter joins the group.
+
+A light whose name ends in R for right, such as `FX-R`, has no G or B to go
+with it, so it stays a light of its own. The fixture is named for the part
+before the letter. Where a light already has that name, RGB is added to it.
+
+To send a fixture's channels to different controls, give each light a
+`channel` entry. Leave the fixture's `button` empty or remove the fixture. A
+light named by two mapped entries is refused.
 
 ## Controls with several lights
 
@@ -162,9 +225,19 @@ animations, so a six-digit white still lights the white LED.
 
 ## A profile that does not fit the board
 
-A fault in the profile itself is reported before the bridge connects: a
-control name no board can give, a malformed range, or a colour that is not hex.
+A fault in the profile itself is reported before the bridge connects. The
+faults are:
+
+- a control name no board can give
+- a malformed range or fixture
+- a colour that is not hex, or a channel that is not R, G, B or W
+- a light mapped by two entries
+
 A board gives names of printable ASCII up to 40 bytes long.
+
+A key given twice in one object, such as a light listed twice, is not a
+fault. JSON keeps only the last of them, so the bridge names the key in a
+warning at startup and uses the last.
 
 A mapped control the board cannot light is not an error. The bridge names it
 at startup, as not being in this board's firmware, as having no LED on this
@@ -179,9 +252,3 @@ A board can change while the bridge runs. Switching its input profile can
 move a control to another button. The bridge reads the board again and
 carries on. An `index` entry the board can no longer honour is held back with
 a warning.
-
-## Contributing
-
-Pull requests adding a profile are welcome. Name the file after the game, and
-state in the pull request which game and version it was captured from, since
-light names can change between releases.

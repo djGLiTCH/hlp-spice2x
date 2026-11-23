@@ -22,7 +22,7 @@ from gp2040ce_hostlighting.testing import (HELLO_COMMANDS, HELLO_PAGES, attach, 
 from hlp_spice2x import hlp
 from hlp_spice2x import profile as profile_module
 
-from . import hardware_bridge, hardware_probe, hardware_lights
+from . import hardware_bridge, hardware_fixture, hardware_probe, hardware_lights
 from .boards import M_ULTRA_CONTROLS, M_ULTRA_LIGHTS, Board, on_clock
 
 T = hlp.CONTROL_TARGETS
@@ -333,3 +333,37 @@ def test_the_end_to_end_check_writes_a_profile_the_bridge_can_load(monkeypatch, 
     assert written['Second light'] == {'button': 'Up', 'index': 1, 'colour': '00FFFF'}
     profile, warnings = profile_module.load(str(tmp_path / 'profile.json'))
     assert len(profile) == 45 and not warnings
+
+
+def test_the_fixture_check_maps_each_fixture_to_one_control(monkeypatch, tmp_path):
+    """Test that the fixture check's profile loads, and its steps mix to the colour they name."""
+    attach(monkeypatch, m_ultra())
+    monkeypatch.setattr(hardware_fixture, 'PROFILE_PATH', tmp_path / 'profile.json')
+    chase, _, _, _, _ = hardware_bridge.describe_board('')
+    lights = hardware_fixture.build_profile(chase[0], chase[1])
+    written = json.loads((tmp_path / 'profile.json').read_text(encoding='utf-8'))['lights']
+    assert set(written['Fixture One']['channels']) == {'R', 'G', 'B'}
+    assert written['Fixture One']['button'] == 'Left'
+    assert written['Fixture Two G'] == {'button': hlp.control_name(chase[1]), 'channel': 'G'}
+    profile, warnings = profile_module.load(str(tmp_path / 'profile.json'))
+    assert set(profile) == set(lights) and not warnings
+
+    animate = hardware_fixture.animator(chase[0], chase[1])
+    states = [[name, 0.0, True] for name in lights]
+    for step, pair in enumerate(hardware_fixture.STEPS):
+        reported = animate(states, step * hardware_fixture.STEP_SECONDS)
+        frame = profile_module.resolve_frame({light: state for light, state, _ in reported}, profile)
+        for control, colour in zip(chase[:2], pair):
+            expected = tuple(int(255 * level) for level in hardware_fixture.COLOURS[colour])
+            assert frame[('button', control)] == expected, (step, colour)
+
+
+def test_the_fixture_checks_pairs_are_contrasting_colours():
+    """Test that each step pairs contrasting colours, so a watcher can tell the fixtures apart.
+
+    No channel is at full level in both colours of a pair, except where one of
+    them is white, which lights all three.
+    """
+    for first, second in hardware_fixture.STEPS:
+        a, b = hardware_fixture.COLOURS[first], hardware_fixture.COLOURS[second]
+        assert not any(x == y == 1.0 for x, y in zip(a, b)) or 'white' in (first, second), (first, second)

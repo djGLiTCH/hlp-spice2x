@@ -19,5 +19,6 @@ htmlcov/
 .venv/
 venv/
 
-# generated per board by tests/hardware_bridge.py
+# generated per board by tests/hardware_bridge.py and tests/hardware_fixture.py
 tests/hardware_bridge_profile.json
+tests/hardware_fixture_profile.json

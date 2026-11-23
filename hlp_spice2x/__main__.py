@@ -20,6 +20,8 @@ from .spiceapi import SpiceApiError, SpiceConnection
 COPYRIGHT = "Copyright (C) 2026 Jacob Simpson (DJ GLiTCH), GPL-3.0-or-later"
 # the debug log's format, the one gp2040ce-hostlighting's commands use
 LOG_FORMAT = '%(asctime)s %(levelname)8s [%(name)s] %(message)s'
+# where an installed copy points for the profile format, since it carries no docs
+PROFILES_README = 'https://github.com/djGLiTCH/hlp-spice2x/blob/main/profiles/README.md'
 
 
 def version_text() -> str:
@@ -146,18 +148,44 @@ def inspect(args) -> int:
             print("spice2x reported no lights. A game must be running.", file=sys.stderr)
             return 1
         if args.write_profile:
-            profile_module.write_skeleton(args.write_profile, states)
-            print(f"wrote {args.write_profile} with {len(states)} lights")
-            print("fill in each 'button' with a control name (Up Down Left Right B1-B4 L1 R1")
-            print("L2 R2 S1 S2 L3 R3 A1 A2 PLED1-4 TURBO CASE, plus A3 A4 and E1-E12 where")
-            print("the board reports them). Leave it empty to ignore a light.")
+            fixtures = profile_module.write_skeleton(args.write_profile, states)
+            print(f"wrote {args.write_profile} with {len(states)} lights{grouping(fixtures)}")
+            print("fill in each 'button' with a control name, such as B1 or UP, and leave it")
+            print("empty to ignore a light. A fixture's one 'button' maps all of its lights.")
+            print(f"The names a profile can use are listed at {PROFILES_README}")
         else:
-            print(f"{len(states)} lights:")
-            for name, state in sorted(states.items()):
-                print(f"  {state:5.2f}  {name}")
+            list_lights(states)
     finally:
         connection.close()
     return 0
+
+
+def grouping(fixtures) -> str:
+    """Say how many lights the fixtures hold, as a clause to follow a count of lights."""
+    if not fixtures:
+        return ''
+    grouped = sum(len(members) for members in fixtures.values())
+    return f", {grouped} of them in {len(fixtures)} fixture{'s' if len(fixtures) != 1 else ''}"
+
+
+def list_lights(states) -> None:
+    """Print each light and its state, and each fixture with the state of each channel.
+
+    :param states: mapping of light name to state, from the game
+    """
+    fixtures = profile_module.find_fixtures(states)
+    grouped = {light for members in fixtures.values() for light in members.values()}
+    print(f"{len(states)} lights{grouping(fixtures)}:")
+    for name, state in sorted(states.items()):
+        if name not in grouped:
+            print(f"  {state:5.2f}  {name}")
+    if fixtures:
+        print(f"{len(fixtures)} fixture{'s' if len(fixtures) != 1 else ''}, each light's state by channel:")
+        # a fixture without a W leaves its column blank, so the names line up
+        width = max(len(members) for members in fixtures.values())
+        for name, members in sorted(fixtures.items()):
+            channels = '  '.join(f"{letter} {states[light]:4.2f}" for letter, light in members.items())
+            print(f"  {channels:{width * 8 - 2}}  {name}")
 
 
 def run_bridge(args) -> int:

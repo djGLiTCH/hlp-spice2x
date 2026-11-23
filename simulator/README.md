@@ -100,6 +100,9 @@ macOS. With more than one board attached, add the start of the board's ID.
   that it is coherent. It does not take the board over.
 - `python -m tests.hardware_lights` steps through every way the bridge lights
   a board, in about 90 seconds, and says what each step should show.
+- `python -m tests.hardware_fixture` shows two RGB fixtures on the board's
+  first two controls, in about 17 seconds, and says what colour each step
+  should show.
 
 ## Use with spice2x
 
@@ -126,8 +129,8 @@ It is on [PyPI][pypi].
   simulator.
 - `wheels/` holds the release's hlp-spice2x wheel and the
   gp2040ce-hostlighting wheel it was tested with.
-- `tests/` holds the simulator, the stand-in Spice API and the other board
-  checks, from the release's tag. The simulator is `hardware_bridge.py` and
+- `tests/` holds the simulator, the stand-in Spice API and the three other
+  board checks, from the release's tag. The simulator is `hardware_bridge.py` and
   the stand-in is `stub_server.py`.
 - `LICENSE` and `LICENSES/` hold the licence text.
 

@@ -16,6 +16,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+Profiles map RGB fixtures. A profile from 1.0 loads and runs as it did.
+
+### Added
+
+- A `channel` entry marks a light as the `R`, `G`, `B` or `W` of a fixture.
+  It lights in that primary colour, in place of a `colour`.
+- A fixture entry names the game's light for each channel under `channels`.
+  Its one `button`, `index` or `range` maps all of them.
+- `--write-profile` writes a fixture entry wherever the game has a light for
+  each of R, G and B with the same name before the letter. A name that ends
+  in R for right, such as `FX-R`, has no G or B to go with it and is left
+  alone.
+- `--list-lights` shows each fixture on one line, with the state of each
+  channel.
+- `tests/hardware_fixture.py` shows two fixtures on a board through the whole
+  program, one mapped by a fixture entry and one by channel entries. The
+  simulator package carries it.
+
+### Changed
+
+- The text after `--write-profile` points at the profiles README for the
+  control names, in place of a list that left out page 3's names.
+- A light state from spice2x that is not a finite number is reported as an
+  error naming the light, in place of a Python traceback.
+- A key given twice in one object of a profile, such as a light listed
+  twice, is named in a warning at startup. The last one is used, as before.
+
 ## [1.0.2] - 2026-11-24
 
 Each release carries the simulator package. The bridge is unchanged from

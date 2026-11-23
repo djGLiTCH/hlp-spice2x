@@ -95,6 +95,21 @@ def test_object_form_entries_are_accepted():
         stub.stop()
 
 
+@pytest.mark.parametrize('state', ['bright', None, float('nan'), float('inf'), 10 ** 400])
+def test_a_state_that_is_not_a_number_is_reported_as_spice2xs(state):
+    """Test that a light state that cannot scale a colour is an API error naming the light."""
+    stub = StubServer(lights=[['Spot', state, True]])
+    try:
+        connection = SpiceConnection('127.0.0.1', stub.port)
+        try:
+            with pytest.raises(SpiceApiError, match="light 'Spot' with state"):
+                connection.lights_read()
+        finally:
+            connection.close()
+    finally:
+        stub.stop()
+
+
 def test_unreachable_server_raises_a_clear_error():
     """Test that a refused connection names spice2x and the port."""
     with pytest.raises(SpiceApiError, match='could not reach spice2x'):

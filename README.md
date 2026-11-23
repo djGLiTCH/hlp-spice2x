@@ -166,8 +166,9 @@ Write a profile skeleton listing every one of them:
 hlp-spice2x --port 1337 --write-profile iidx.json
 ```
 
-Open `iidx.json` and fill in the `button` field of each light to map. Leave
-the rest empty. Then run the bridge:
+The skeleton writes the red, green and blue lights of one fixture as a
+single entry. Open `iidx.json` and fill in the `button` field of each light
+or fixture to map. Leave the rest empty. Then run the bridge:
 
 ```
 hlp-spice2x --port 1337 --profile iidx.json
@@ -199,7 +200,11 @@ claim given up, on-board animations restored
   "lights": {
     "P1 Button 1": { "button": "B1", "colour": "FF0000" },
     "P1 Start":    { "button": "S2", "colour": "FFAA00" },
-    "Neon Left":   { "range": [16, 30], "colour": "FF00FF" }
+    "Neon Left":   { "range": [16, 30], "colour": "FF00FF" },
+    "Woofer B":    { "button": "E2", "channel": "B" },
+    "Top Panel":   { "button": "E1", "channels": { "R": "Top Panel R",
+                                                   "G": "Top Panel G",
+                                                   "B": "Top Panel B" } }
   }
 }
 ```
@@ -220,6 +225,10 @@ claim given up, on-board animations restored
   `RRGGBBWW` ask for the board's white channel, which needs a GRBW or RGBW
   chain. On any other chain the white is dropped, the colour is sent as RGB,
   and the reason is printed once at startup.
+- `channel` marks a light as the `R`, `G`, `B` or `W` of a fixture, in place
+  of a `colour`. It lights in that primary colour, scaled by the game.
+- `channels` makes an entry a fixture. It names the game's light for each
+  channel, and the entry's one `button`, `index` or `range` maps all of them.
 
 The three forms differ in how portable they are:
 
@@ -230,8 +239,11 @@ The three forms differ in how portable they are:
 | `range` | Tied to one board. |
 
 Cabinet lights are mostly single-colour, so the game reports an intensity
-from 0.0 to 1.0 and the profile supplies the colour. Two lights mapped to the
-same control add together and clamp.
+from 0.0 to 1.0 and the profile supplies the colour. Some fixtures are RGB,
+and the game drives each channel as a light of its own. Two lights mapped to
+the same control add together and clamp, so a fixture's channels mix to the
+colour the game asks for. The [profiles README][profiles-readme] sets out
+each form.
 
 ## Options
 
@@ -300,12 +312,14 @@ timing on a clock the tests control.
 
 Some checks need a board. They show what a board reports about itself,
 whether each light is addressed correctly, whether the staging order holds,
-and whether the whole program works from its own entry point.
+whether the whole program works from its own entry point, and whether RGB
+fixtures show the colours the game mixes.
 
 ```
 python -m tests.hardware_probe     # read-only, safe to run mid-game
 python -m tests.hardware_lights    # eleven phases, watched by eye
 python -m tests.hardware_bridge    # the whole program for 30 s
+python -m tests.hardware_fixture   # two RGB fixtures for 17 s, watched by eye
 ```
 
 [tests/README.md][tests-readme] describes each test file and how to run it.
@@ -313,12 +327,6 @@ python -m tests.hardware_bridge    # the whole program for 30 s
 Each release also carries the simulator package, an `hlp-spice2x-simulator`
 zip. It runs `tests.hardware_bridge` against an attached board with no clone
 and no game. [simulator/README.md][simulator-readme] describes it.
-
-## Contributing profiles
-
-Profiles for real games are welcome. Write one with `--write-profile`, fill
-it in, check it with `--dry-run`, and open a pull request adding it to
-`profiles/`. State the game and version it was captured from.
 
 ## Changelog
 
@@ -340,6 +348,7 @@ part: the control names, what it requires of a board and its messages.
 [spice2x]: https://github.com/spice2x/spice2x.github.io
 [v0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.3.0
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
+[profiles-readme]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/profiles/README.md
 [tests-readme]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/tests/README.md
 [simulator-readme]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/simulator/README.md
 [changelog]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/CHANGELOG.md

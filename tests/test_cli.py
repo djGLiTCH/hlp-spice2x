@@ -94,6 +94,38 @@ def test_write_profile_creates_a_skeleton(server, tmp_path, capsys):
     assert 'wrote' in capsys.readouterr().out
 
 
+FIXTURE_LIGHTS = [['Woofer R', 1.0, True], ['Woofer G', 0.5, True], ['Woofer B', 0.0, True],
+                  ['FX R', 0.25, True]]
+
+
+def test_list_lights_shows_a_fixture_by_its_channels(capsys):
+    """Test that --list-lights groups a fixture's lights as the skeleton will, and leaves FX R alone."""
+    stub = StubServer(lights=FIXTURE_LIGHTS)
+    try:
+        assert main(['--port', str(stub.port), '--list-lights']) == 0
+    finally:
+        stub.stop()
+    out = capsys.readouterr().out
+    assert '4 lights, 3 of them in 1 fixture:' in out
+    assert '   0.25  FX R' in out
+    assert '  R 1.00  G 0.50  B 0.00  Woofer' in out
+    assert 'Woofer R' not in out
+
+
+def test_write_profile_says_how_many_fixtures_it_grouped(tmp_path, capsys):
+    """Test that --write-profile reports the fixtures and points at the profile format."""
+    path = tmp_path / 'new.json'
+    stub = StubServer(lights=FIXTURE_LIGHTS)
+    try:
+        assert main(['--port', str(stub.port), '--write-profile', str(path)]) == 0
+    finally:
+        stub.stop()
+    out = capsys.readouterr().out
+    assert f"wrote {path} with 4 lights, 3 of them in 1 fixture" in out
+    assert 'profiles/README.md' in out
+    assert set(json.loads(path.read_text(encoding='utf-8'))['lights']) == {'Woofer', 'FX R'}
+
+
 def test_write_profile_refuses_to_overwrite(server, tmp_path, capsys):
     """Test that an existing file is not clobbered."""
     path = tmp_path / 'new.json'

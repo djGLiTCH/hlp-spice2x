@@ -21,6 +21,7 @@ Two details of the wire format are taken from spice2x's reference C++ client:
   framing is found after decryption. Ciphertext contains NULs.
 """
 import json
+import math
 import socket
 
 
@@ -119,6 +120,16 @@ class SpiceConnection:
                 name, state = entry[0], entry[1]
             else:
                 continue
-            if name is not None:
-                states[str(name)] = float(state)
+            if name is None:
+                continue
+            # A state that is not a finite number cannot scale a colour. It is
+            # reported here as a fault in spice2x's reply, naming the light.
+            try:
+                value = float(state)
+            except (TypeError, ValueError, OverflowError):
+                value = math.nan
+            if not math.isfinite(value):
+                raise SpiceApiError(f"spice2x reported light '{name}' with state {state!r}, "
+                                    f"which is not a number")
+            states[str(name)] = value
         return states
