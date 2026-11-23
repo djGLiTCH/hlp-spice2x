@@ -1,0 +1,44 @@
+# hlp-spice2x (spice2x to GP2040-CE Host Lighting bridge)
+# Filename: publish.yml
+# Folder: .github/workflows
+# https://github.com/djGLiTCH/hlp-spice2x
+# SPDX-FileCopyrightText: (C) 2026 Jacob Simpson (DJ GLiTCH)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSES/GPL-3.0-or-later.txt at the repository root.
+
+# Upload a published release's wheel and sdist to PyPI by trusted publishing. The files are the release's own
+# assets, so PyPI gets the files the release was checked with. A pre-release is not uploaded. Run by hand, it
+# uploads the release the tag names.
+
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release's tag, for example v1.0.1
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    name: Upload to PyPI
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-22.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/hlp-spice2x/
+    permissions:
+      contents: read
+      id-token: write          # the identity PyPI's trusted publisher checks
+    steps:
+      - name: Download the release's wheel and sdist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.whl' --pattern '*.tar.gz' --dir dist
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
