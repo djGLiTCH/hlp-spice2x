@@ -16,6 +16,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+hlp-spice2x is on PyPI. The bridge is unchanged from 1.0.0.
+
+### Changed
+
+- pip installs the bridge from PyPI with `pip install hlp-spice2x`. Git is no
+  longer needed.
+- The README's links to the repository's files are full URLs, so they work
+  on PyPI.
+- The package metadata names the source, the changelog and the issues.
+
 ## [1.0.0] - 2026-11-23
 
 This version speaks HLP 2.0, the final protocol, which GP2040-CE carries from

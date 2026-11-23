@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hlp-spice2x"
-version = "1.0.0"
+version = "1.0.1"
 description = "Drive a GP2040-CE board's LEDs from spice2x cabinet lighting"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -38,6 +38,9 @@ dev = ["flake8", "flake8-docstrings", "flake8-pyproject", "pytest"]
 
 [project.urls]
 Homepage = "https://github.com/djGLiTCH/hlp-spice2x"
+Source = "https://github.com/djGLiTCH/hlp-spice2x"
+Changelog = "https://github.com/djGLiTCH/hlp-spice2x/blob/main/CHANGELOG.md"
+Issues = "https://github.com/djGLiTCH/hlp-spice2x/issues"
 
 [project.scripts]
 hlp-spice2x = "hlp_spice2x.__main__:main"

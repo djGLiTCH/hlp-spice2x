@@ -84,7 +84,6 @@ The protocol is specified in [docs/host-lighting.md][spec].
   later, which pip installs from PyPI with the bridge. hidapi has no wheels
   for Python 3.15 yet, so on 3.15 pip builds it from source, which needs a C
   compiler.
-- Git, which pip uses to install the bridge from GitHub.
 
 ## Firmware
 
@@ -150,7 +149,7 @@ coordinate through the protocol's claim.
 ## Install
 
 ```
-pip install git+https://github.com/djGLiTCH/hlp-spice2x
+pip install hlp-spice2x
 ```
 
 ## Quick start
@@ -286,7 +285,11 @@ resets.
 
 ## Tests
 
+The tests run from a clone of the repository:
+
 ```
+git clone https://github.com/djGLiTCH/hlp-spice2x
+cd hlp-spice2x
 pip install -e ".[dev]"
 pytest
 ```
@@ -305,8 +308,7 @@ python -m tests.hardware_lights    # eleven phases, watched by eye
 python -m tests.hardware_bridge    # the whole program for 30 s
 ```
 
-[tests/README.md](tests/README.md) describes each test file and how to run
-it.
+[tests/README.md][tests-readme] describes each test file and how to run it.
 
 ## Contributing profiles
 
@@ -316,15 +318,15 @@ it in, check it with `--dry-run`, and open a pull request adding it to
 
 ## Changelog
 
-[CHANGELOG.md](CHANGELOG.md) lists what changed in each release and anything
+[CHANGELOG.md][changelog] lists what changed in each release and anything
 that needs action when upgrading.
 
 ## Licence
 
 GPL-3.0-or-later, (C) 2026 Jacob Simpson. Each file carries its SPDX header,
 and `REUSE.toml` covers `profiles/example.json`, which cannot. The licence
-text is in [LICENSE](LICENSE), and the same text is in
-[`LICENSES/`](LICENSES/GPL-3.0-or-later.txt) for REUSE.
+text is in [LICENSE][licence], and the same text is in
+[`LICENSES/`][licences] for REUSE.
 
 The protocol layer is [gp2040ce-hostlighting][hostlighting], a separate
 package, also GPL-3.0-or-later. `hlp_spice2x/hlp.py` holds the bridge's own
@@ -334,6 +336,10 @@ part: the control names, what it requires of a board and its messages.
 [spice2x]: https://github.com/spice2x/spice2x.github.io
 [v0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.3.0
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
+[tests-readme]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/tests/README.md
+[changelog]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/CHANGELOG.md
+[licence]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/LICENSE
+[licences]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/LICENSES/GPL-3.0-or-later.txt
 [spec]: https://github.com/OpenStickCommunity/GP2040-CE/blob/main/docs/host-lighting.md
 [pr-1691]: https://github.com/OpenStickCommunity/GP2040-CE/pull/1691
 [gp2040-ce-releases]: https://github.com/OpenStickCommunity/GP2040-CE/releases
