@@ -16,7 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
-## [Unreleased]
+## [1.0.1] - 2026-11-23
 
 hlp-spice2x is on PyPI. The bridge is unchanged from 1.0.0.
 
@@ -470,6 +470,7 @@ Host Lighting Protocol. Profiles name controls. The firmware resolves them
 against each board's own LED map, so one profile works across layouts.
 
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
+[1.0.1]: https://github.com/djGLiTCH/hlp-spice2x/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.9.2...v1.0.0
 [0.9.2]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/djGLiTCH/hlp-spice2x/compare/v0.9.0...v0.9.1
