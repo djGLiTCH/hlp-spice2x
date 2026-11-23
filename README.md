@@ -76,29 +76,28 @@ The protocol is specified in [docs/host-lighting.md][spec].
 
 - A GP2040-CE board running firmware with the Host Lighting add-on, enabled
   in the web configurator under Configuration, Add-Ons Configuration, Host
-  Lighting. The add-on is off by default and is not in an official release
-  yet. See [Firmware](#firmware).
+  Lighting. The add-on is in GP2040-CE 0.8.0 and later, and is off by
+  default. See [Firmware](#firmware).
 - spice2x started with `-api PORT`, and with `-apipass PASS` where a password
   is wanted.
-- Python 3.14 or later, and [gp2040ce-hostlighting][hostlighting], which pip
-  installs with the bridge. hidapi has no wheels for Python 3.15 yet, so on
-  3.15 pip builds it from source, which needs a C compiler.
-- Git, which pip uses to install the bridge and the library from GitHub.
+- Python 3.14 or later, and [gp2040ce-hostlighting][hostlighting] 1.0 or
+  later, which pip installs from PyPI with the bridge. hidapi has no wheels
+  for Python 3.15 yet, so on 3.15 pip builds it from source, which needs a C
+  compiler.
+- Git, which pip uses to install the bridge from GitHub.
 
 ## Firmware
 
-Host Lighting is a proposed add-on, open upstream as [PR #1691][pr-1691].
-Until it merges the board needs a test build. This version needs an HLP v2.0
-release candidate 18 build or a later 2.0 candidate. Earlier candidates are
-not supported. The test builds are published with each
-[release candidate][rc18].
+Host Lighting is part of GP2040-CE from 0.8.0, merged upstream as
+[PR #1691][pr-1691]. A board needs GP2040-CE 0.8.0 or later, from the
+[GP2040-CE releases][gp2040-ce-releases], which have a UF2 for every board
+GP2040-CE supports.
 
-There is a UF2 for every board GP2040-CE supports, with flashing and setup
-instructions. Enable the add-on in the web configurator once the board runs
-one of them.
+If no 0.8.0 or later release is out yet, use the [HLP v2.0 builds][hlp-v2.0]
+instead. They carry Host Lighting for every board, with flashing and setup
+instructions. Builds of the HLP v2.0 release candidates are not supported.
 
-HLP 2.0 is a release candidate, so this version of the bridge is a
-pre-release until the protocol is final.
+Enable the add-on in the web configurator once the board runs one of them.
 
 ## Protocol version
 
@@ -335,6 +334,7 @@ part: the control names, what it requires of a board and its messages.
 [spice2x]: https://github.com/spice2x/spice2x.github.io
 [v0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.3.0
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
-[spec]: https://github.com/djGLiTCH/GP2040-CE/blob/HLP_v2.0-rc18/docs/host-lighting.md
+[spec]: https://github.com/OpenStickCommunity/GP2040-CE/blob/main/docs/host-lighting.md
 [pr-1691]: https://github.com/OpenStickCommunity/GP2040-CE/pull/1691
-[rc18]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc18
+[gp2040-ce-releases]: https://github.com/OpenStickCommunity/GP2040-CE/releases
+[hlp-v2.0]: https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0

@@ -69,15 +69,18 @@ def test_an_identity_string_that_did_not_fit_is_asked_for_on_its_own():
 def test_no_board_points_at_the_firmware_builds(monkeypatch):
     """Test that the not-found error says where to get firmware.
 
-    Host Lighting is not in an official GP2040-CE release, and a user on stock
-    firmware has no add-on setting to check.
+    Host Lighting is in GP2040-CE 0.8.0 and later, and a user on earlier stock
+    firmware has no add-on setting to check. Until 0.8.0 is released the HLP
+    v2.0 builds carry it.
     """
     attach(monkeypatch)
     with pytest.raises(hl.HostLightingError) as caught:
         hlp.open_device()
     message = str(caught.value)
     assert 'add-on enabled' in message
-    assert 'releases/tag/HLP_v2.0-rc18' in message
+    assert 'GP2040-CE 0.8.0 and later' in message
+    assert 'https://github.com/OpenStickCommunity/GP2040-CE/releases' in message
+    assert 'https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0' in message
     assert 'another protocol major' not in message
 
 

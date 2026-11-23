@@ -205,7 +205,9 @@ def test_the_probe_with_no_board_says_where_to_get_firmware(monkeypatch, capsys)
     """Test that an empty enumeration fails and points at the firmware builds."""
     attach(monkeypatch)
     assert hardware_probe.main(['']) == 1
-    assert 'releases/tag/HLP_v2.0-rc18' in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert 'OpenStickCommunity/GP2040-CE/releases' in out
+    assert 'releases/tag/HLP_v2.0' in out
 
 
 def test_the_table_checks_hold_for_a_coherent_board():

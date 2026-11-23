@@ -45,10 +45,13 @@ from gp2040ce_hostlighting.protocol import (ADDRESSING_ACTION, ADDRESSING_KIND, 
                                             HostLightingMagicError, Requirements, find_other_majors, list_boards,
                                             missing_capabilities, require_capabilities)
 
-# The message for a run that finds no interface. The link names the firmware builds this release was built against.
+# The message for a run that finds no interface. The links name the GP2040-CE releases that carry Host Lighting and
+# the HLP v2.0 builds, which carry it until GP2040-CE 0.8.0 is released.
 NO_INTERFACE = ("no Host Lighting interface found. Connect a board with the add-on enabled. "
-                "The add-on is not in an official GP2040-CE release yet. Test builds are at "
-                "https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0-rc18")
+                "Host Lighting is in GP2040-CE 0.8.0 and later, at "
+                "https://github.com/OpenStickCommunity/GP2040-CE/releases. If no 0.8.0 or later release is out yet, "
+                "the HLP v2.0 builds carry it for every board, at "
+                "https://github.com/djGLiTCH/GP2040-CE/releases/tag/HLP_v2.0")
 # the message for an interface whose HELLO reply does not carry the protocol's magic
 NOT_HOST_LIGHTING = "handshake failed: this interface did not answer as a Host Lighting one"
 

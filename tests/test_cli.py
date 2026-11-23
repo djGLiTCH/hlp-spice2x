@@ -167,7 +167,9 @@ def test_list_boards_with_none_attached_points_at_the_firmware(monkeypatch, caps
     """Test that an empty listing fails and says where to get firmware."""
     attach(monkeypatch)
     assert main(['--list-boards']) == 1
-    assert 'releases/tag/HLP_v2.0-rc18' in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert 'OpenStickCommunity/GP2040-CE/releases' in err
+    assert 'releases/tag/HLP_v2.0' in err
 
 
 def test_the_bridge_runs_from_the_command_line_against_a_board(server, tmp_path, monkeypatch, capsys):

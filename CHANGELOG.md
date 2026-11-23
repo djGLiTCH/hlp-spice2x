@@ -16,6 +16,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+This version speaks HLP 2.0, the final protocol, which GP2040-CE carries from
+0.8.0. It is the first stable release. The lighting commands and the pages the
+bridge reads are as in 0.9.2, so a profile needs no change.
+
+### Breaking
+
+- GP2040-CE 0.8.0 or later is required. Until 0.8.0 is released, the
+  `HLP_v2.0` builds carry Host Lighting for every board. Builds of the HLP
+  v2.0 release candidates are not supported.
+
+### Changed
+
+- gp2040ce-hostlighting 1.0 or later is required, and pip installs it from
+  PyPI. Git is needed only to install the bridge from GitHub.
+- Firmware links point at the GP2040-CE releases, and at the `HLP_v2.0`
+  builds while no 0.8.0 or later release is out. The protocol link points at
+  `docs/host-lighting.md` in GP2040-CE.
+- The message for a run that finds no board says Host Lighting is in
+  GP2040-CE 0.8.0 and later.
+
 ## [0.9.2] - 2026-11-14
 
 This version speaks HLP v2.0 release candidate 18 (`HLP_v2.0-rc18`). It is a
