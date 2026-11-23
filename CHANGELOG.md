@@ -16,6 +16,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html). While
 the major version is 0, a minor bump is where breaking changes go.
 
+## [Unreleased]
+
+Each release carries the simulator package. The bridge is unchanged from
+1.0.0.
+
+### Added
+
+- The `simulator` folder holds the simulator package's README and run
+  scripts. The package runs the bridge against an attached board, with a
+  stand-in for spice2x, so no game is needed.
+- Each release has an `hlp-spice2x-simulator` zip. It holds the run scripts,
+  the board checks and the wheels of hlp-spice2x and gp2040ce-hostlighting.
+
 ## [1.0.1] - 2026-11-23
 
 hlp-spice2x is on PyPI. The bridge is unchanged from 1.0.0.

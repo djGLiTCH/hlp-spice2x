@@ -186,6 +186,9 @@ takeover that did not last its keepalive, and exits non-zero if there was any.
 python -m tests.hardware_bridge
 ```
 
+The simulator package on each release runs this check with no clone. Its
+README is [simulator/README.md][simulator-readme].
+
 This check runs the whole program. It stands up a fake Spice API on a
 loopback port, writes a profile to disk, and invokes the command line entry
 point as a shell would, for 30 s, ending with a real interrupt. Argument
@@ -220,3 +223,4 @@ and the hardware checks against the model board, and a change is pinned there
 first. The hardware checks confirm behaviour on a real board.
 
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
+[simulator-readme]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/simulator/README.md

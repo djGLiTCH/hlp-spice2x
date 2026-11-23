@@ -310,6 +310,10 @@ python -m tests.hardware_bridge    # the whole program for 30 s
 
 [tests/README.md][tests-readme] describes each test file and how to run it.
 
+Each release also carries the simulator package, an `hlp-spice2x-simulator`
+zip. It runs `tests.hardware_bridge` against an attached board with no clone
+and no game. [simulator/README.md][simulator-readme] describes it.
+
 ## Contributing profiles
 
 Profiles for real games are welcome. Write one with `--write-profile`, fill
@@ -337,6 +341,7 @@ part: the control names, what it requires of a board and its messages.
 [v0.3.0]: https://github.com/djGLiTCH/hlp-spice2x/releases/tag/v0.3.0
 [hostlighting]: https://github.com/djGLiTCH/gp2040ce-hostlighting
 [tests-readme]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/tests/README.md
+[simulator-readme]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/simulator/README.md
 [changelog]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/CHANGELOG.md
 [licence]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/LICENSE
 [licences]: https://github.com/djGLiTCH/hlp-spice2x/blob/main/LICENSES/GPL-3.0-or-later.txt

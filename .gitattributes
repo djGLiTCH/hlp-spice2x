@@ -7,3 +7,8 @@
 # See LICENSES/GPL-3.0-or-later.txt at the repository root.
 
 * text=auto
+
+# the simulator's run scripts keep the line endings their shells need on
+# every checkout and in every archive
+*.bat text eol=crlf
+*.sh text eol=lf
